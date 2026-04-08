@@ -1,0 +1,95 @@
+[project]
+name = "ha-xtool-s1"
+version = "1.0.0"
+description = "Home Assistant custom integration for the xTool S1 laser engraver"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "hilman2" }]
+requires-python = ">=3.13"
+
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+  "A",    # flake8-builtins
+  "B",    # flake8-bugbear
+  "E",    # pycodestyle errors
+  "F",    # pyflakes
+  "I",    # isort
+  "N",    # pep8-naming
+  "PL",   # pylint
+  "PT",   # flake8-pytest-style
+  "RUF",  # ruff-specific
+  "SIM",  # flake8-simplify
+  "UP",   # pyupgrade
+  "W",    # pycodestyle warnings
+]
+ignore = [
+  "PLR0913",  # too many arguments — HA constructors are wide
+  "PLR2004",  # magic values are fine in tests/fixtures
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+  "PLR2004",  # magic numbers are fine in tests
+  "S101",     # asserts are the whole point of pytest
+  "PLC0415",  # local imports keep test failures self-contained
+  "PT011",    # pytest.raises(Exception) is OK in scan-failure smoke tests
+  "PT018",    # composite asserts are readable in test code
+  "B017",     # assert-raises-Exception
+  "PLR0911",  # too many returns in helper functions
+  "PLR0912",  # too many branches
+]
+"scripts/**/*.py" = [
+  "PLR2004",  # magic numbers are intrinsic to layout helpers
+  "PLR0913",
+  "PLR0915",
+  "T201",     # print() is fine in CLI scripts
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.xtool_s1"]
+force-sort-within-sections = true
+combine-as-imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = [
+  "-n", "auto",
+  "--cov=custom_components.xtool_s1",
+  "--cov-report=term-missing",
+  "--cov-report=xml",
+  "--cov-fail-under=100",
+  "--strict-markers",
+]
+testpaths = ["tests"]
+norecursedirs = [".venv", "build", "dist", "node_modules"]
+
+[tool.coverage.run]
+branch = true
+source = ["custom_components/xtool_s1"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]

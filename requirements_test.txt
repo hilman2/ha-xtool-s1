@@ -1,0 +1,16 @@
+# Test dependencies for ha-xtool-s1.
+# Install in WSL Ubuntu venv:
+#   uv venv --python 3.13 .venv
+#   source .venv/bin/activate
+#   uv pip install -r requirements_test.txt
+
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=5.0.0
+pytest-xdist>=3.6.0
+pytest-homeassistant-custom-component>=0.13.190
+syrupy>=4.7.0
+
+# Lint / format (kept here so CI installs them in one shot)
+black>=24.10.0
+ruff>=0.7.0

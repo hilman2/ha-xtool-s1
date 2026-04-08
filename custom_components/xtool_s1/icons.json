@@ -1,0 +1,56 @@
+{
+  "entity": {
+    "sensor": {
+      "status": {
+        "default": "mdi:laser-pointer",
+        "state": {
+          "idle": "mdi:sleep",
+          "ready": "mdi:check-circle-outline",
+          "measuring": "mdi:ruler",
+          "starting": "mdi:play-circle-outline",
+          "running": "mdi:laser-pointer",
+          "finishing": "mdi:flag-checkered",
+          "unknown": "mdi:help-circle-outline"
+        }
+      },
+      "firmware_version": {
+        "default": "mdi:chip"
+      },
+      "serial_number": {
+        "default": "mdi:identifier"
+      },
+      "tool_type": {
+        "default": "mdi:tools"
+      },
+      "job_file": {
+        "default": "mdi:file-outline"
+      },
+      "position_x": {
+        "default": "mdi:axis-x-arrow"
+      },
+      "position_y": {
+        "default": "mdi:axis-y-arrow"
+      },
+      "probe_z": {
+        "default": "mdi:axis-z-arrow"
+      },
+      "fan_a": {
+        "default": "mdi:fan"
+      },
+      "fan_b": {
+        "default": "mdi:fan"
+      }
+    },
+    "binary_sensor": {
+      "running": {
+        "default": "mdi:laser-pointer"
+      },
+      "alarm": {
+        "default": "mdi:alert-octagon"
+      },
+      "connection": {
+        "default": "mdi:lan-connect"
+      }
+    }
+  }
+}

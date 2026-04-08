@@ -1,0 +1,125 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "xTool S1 hinzufügen",
+        "description": "Wähle, wie der Laser gefunden werden soll. Die S1-Firmware spricht WebSocket auf Port 8081.",
+        "menu_options": {
+          "scan_network": "Lokales Netzwerk scannen",
+          "manual": "IP-Adresse manuell eingeben"
+        }
+      },
+      "scan_network": {
+        "title": "Lokales Netzwerk scannen",
+        "description": "Gib einen CIDR-Bereich ein. Standard ist das Subnetz von Home Assistant ({suggested}). Maximal 1024 Hosts.",
+        "data": {
+          "network": "Netzwerkbereich (CIDR)"
+        },
+        "data_description": {
+          "network": "Beispiel: 192.168.1.0/24"
+        }
+      },
+      "scan_results": {
+        "title": "Gefundene Geräte",
+        "description": "{count} mögliches Gerät bzw. Geräte gefunden. Wähle das hinzuzufügende aus.",
+        "data": {
+          "host": "Gerät"
+        }
+      },
+      "manual": {
+        "title": "IP-Adresse eingeben",
+        "description": "IP-Adresse oder Hostname des Lasers.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "Beispiel: 192.168.1.42"
+        }
+      },
+      "reconfigure": {
+        "title": "IP-Adresse aktualisieren",
+        "description": "IP-Adresse des bereits konfigurierten Lasers ändern. Die Seriennummer muss übereinstimmen.",
+        "data": {
+          "host": "Host"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "invalid_host": "Ungültiger Hostname oder ungültige IP-Adresse",
+      "invalid_network": "Kein gültiger CIDR-Netzwerkbereich.",
+      "network_too_large": "Der Bereich enthält zu viele Hosts. Bitte /22 (1024 Hosts) oder kleiner verwenden.",
+      "scan_failed": "Der Netzwerk-Scan ist fehlgeschlagen. Bitte erneut versuchen.",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "already_configured": "Gerät ist bereits konfiguriert",
+      "no_devices_found": "Im angegebenen Bereich wurde kein xTool S1 gefunden.",
+      "wrong_device": "Das Gerät unter dieser IP hat eine andere Seriennummer als das ursprünglich konfigurierte.",
+      "reconfigure_successful": "Neukonfiguration erfolgreich"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "idle": "Bereit",
+          "ready": "Einsatzbereit",
+          "measuring": "Misst",
+          "starting": "Startet",
+          "running": "Läuft",
+          "finishing": "Beendet",
+          "unknown": "Unbekannt"
+        }
+      },
+      "firmware_version": {
+        "name": "Firmware-Version"
+      },
+      "serial_number": {
+        "name": "Seriennummer"
+      },
+      "tool_type": {
+        "name": "Werkzeug-Typ"
+      },
+      "job_file": {
+        "name": "Job-Datei"
+      },
+      "position_x": {
+        "name": "Position X"
+      },
+      "position_y": {
+        "name": "Position Y"
+      },
+      "probe_z": {
+        "name": "Tastpunkt Z"
+      },
+      "fan_a": {
+        "name": "Lüfter A"
+      },
+      "fan_b": {
+        "name": "Lüfter B"
+      }
+    },
+    "binary_sensor": {
+      "running": {
+        "name": "Aktiv"
+      },
+      "alarm": {
+        "name": "Alarm"
+      },
+      "connection": {
+        "name": "Verbindung"
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "xTool S1 unter {host} ist nicht erreichbar: {error}"
+    },
+    "protocol_error": {
+      "message": "Unerwartete Antwort vom xTool S1: {error}"
+    }
+  }
+}

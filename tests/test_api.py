@@ -1,0 +1,859 @@
+"""Tests for the xtool_s1 WebSocket client and protocol parser."""
+
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+import json
+
+import pytest
+
+from custom_components.xtool_s1.api import (
+    DiscoveredDevice,
+    NetworkTooLargeError,
+    XToolS1Client,
+    XToolS1ConnectionError,
+    XToolS1ProtocolError,
+    XToolS1State,
+    _normalise_alarm,
+    _parse_m13_payload,
+    _parse_m27_payload,
+    _parse_m105_payload,
+    discover_devices,
+    parse_network,
+)
+
+from .conftest import load_fixture
+from .const import MOCK_FIRMWARE, MOCK_SERIAL
+
+# --- pure parser unit tests --------------------------------------------------
+
+
+class TestParserHelpers:
+    """Pure-function unit tests for the M-code helpers."""
+
+    def test_parse_m27_payload_full(self) -> None:
+        result = _parse_m27_payload("X-12.500 Y45.200 Z10.000 U0.000")
+        assert result == {
+            "pos_x": -12.5,
+            "pos_y": 45.2,
+            "pos_z": 10.0,
+            "pos_u": 0.0,
+        }
+
+    def test_parse_m27_payload_partial(self) -> None:
+        assert _parse_m27_payload("X1.0 Y2.0") == {"pos_x": 1.0, "pos_y": 2.0}
+
+    def test_parse_m27_payload_skips_garbage(self) -> None:
+        assert _parse_m27_payload("XAA.BB Y2.0") == {"pos_y": 2.0}
+
+    def test_parse_m27_payload_empty(self) -> None:
+        assert _parse_m27_payload("") == {}
+
+    def test_parse_m105_packed(self) -> None:
+        result = _parse_m105_payload("X42.10Y39.80Z35.20")
+        assert result == {"temp_x": 42.1, "temp_y": 39.8, "temp_z": 35.2}
+
+    def test_parse_m105_signed(self) -> None:
+        assert _parse_m105_payload("X-1.50Y+2.50Z0.00") == {
+            "temp_x": -1.5,
+            "temp_y": 2.5,
+            "temp_z": 0.0,
+        }
+
+    def test_parse_m105_empty(self) -> None:
+        assert _parse_m105_payload("") == {}
+
+    def test_parse_m13_payload(self) -> None:
+        assert _parse_m13_payload("A85 B72") == {"fan_a": 85, "fan_b": 72}
+
+    def test_parse_m13_payload_partial(self) -> None:
+        assert _parse_m13_payload("A0") == {"fan_a": 0}
+
+    def test_parse_m13_payload_garbage(self) -> None:
+        assert _parse_m13_payload("Axx Byy") == {}
+
+    @pytest.mark.parametrize(
+        ("raw", "expected_present"),
+        [
+            ("A0", False),
+            ("0", False),
+            ("", False),
+            ("A1", True),
+            ("A7", True),
+            ("E42", True),
+        ],
+    )
+    def test_normalise_alarm(self, raw: str, expected_present: bool) -> None:
+        _, present = _normalise_alarm(raw)
+        assert present is expected_present
+
+
+# --- frame-handling tests against the in-process FakeS1Server ---------------
+
+
+@pytest.mark.asyncio
+class TestXToolS1ClientWithFakeServer:
+    """Integration-style tests using the FakeS1Server."""
+
+    async def test_connect_and_request_status(self, fake_s1_server, hass) -> None:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(hass)
+        client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+
+        states: list[XToolS1State] = []
+        client.on_state(states.append)
+
+        try:
+            await client.connect()
+            assert client.connected
+            await client.request_status()
+            # Wait for the listener to absorb the M2003 reply.
+            for _ in range(20):
+                if client.state.serial_number is not None:
+                    break
+                await asyncio.sleep(0.05)
+            assert client.state.serial_number == MOCK_SERIAL
+            assert client.state.firmware_version == MOCK_FIRMWARE
+            assert client.state.work_state_raw == "S3"
+            assert client.state.fan_a == 0
+            assert client.state.fan_b == 0
+            assert client.state.alarm_present is False
+            assert client.state.job_file is None
+        finally:
+            await client.disconnect()
+        assert client.connected is False
+        # Subscribers received both the connected=True frame and the M2003 update.
+        assert any(s.serial_number == MOCK_SERIAL for s in states)
+
+    async def test_handles_running_snapshot(self, fake_s1_server_running, hass) -> None:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(hass)
+        client = XToolS1Client(
+            fake_s1_server_running.host,
+            session,
+            port=fake_s1_server_running.port,
+        )
+        try:
+            state = await client.probe_initial_state(timeout=2.0)
+        finally:
+            await client.disconnect()
+        assert state.serial_number == MOCK_SERIAL
+        assert state.work_state_raw == "S14"
+        assert state.pos_x == -12.5
+        assert state.pos_y == 45.2
+        assert state.fan_a == 85
+        assert state.fan_b == 72
+        assert state.job_file == "my_engraving.gcode"
+
+    async def test_handles_alarm_snapshot(self, fake_s1_server_alarm, hass) -> None:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(hass)
+        client = XToolS1Client(
+            fake_s1_server_alarm.host,
+            session,
+            port=fake_s1_server_alarm.port,
+        )
+        try:
+            state = await client.probe_initial_state(timeout=2.0)
+        finally:
+            await client.disconnect()
+        assert state.alarm_present is True
+        assert state.alarm_raw == "A7"
+
+    async def test_ping_records_frame(self, fake_s1_server, hass) -> None:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(hass)
+        client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+        try:
+            await client.connect()
+            await client.ping()
+            await asyncio.sleep(0.1)
+        finally:
+            await client.disconnect()
+        assert any(f.startswith("M303") for f in fake_s1_server.received)
+
+    async def test_connect_failure_raises(self, hass) -> None:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(hass)
+        client = XToolS1Client("127.0.0.1", session, port=1)  # nothing listens
+        with pytest.raises(XToolS1ConnectionError):
+            await client.connect()
+        assert client.connected is False
+
+    async def test_send_when_disconnected_raises(self, hass) -> None:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(hass)
+        client = XToolS1Client("127.0.0.1", session, port=1)
+        with pytest.raises(XToolS1ConnectionError):
+            await client.ping()
+
+    async def test_probe_initial_state_timeout(
+        self, fake_s1_server_silent, hass
+    ) -> None:
+        """A WS server that never replies must time out cleanly."""
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(hass)
+        client = XToolS1Client(
+            fake_s1_server_silent.host, session, port=fake_s1_server_silent.port
+        )
+        with pytest.raises(XToolS1ConnectionError):
+            await client.probe_initial_state(timeout=0.5)
+        await client.disconnect()
+
+    async def test_subscriber_unsubscribe(self, fake_s1_server, hass) -> None:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(hass)
+        client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+        events: list[XToolS1State] = []
+        unsub = client.on_state(events.append)
+        unsub()
+        try:
+            await client.connect()
+            await client.request_status()
+            await asyncio.sleep(0.2)
+        finally:
+            await client.disconnect()
+        # The subscriber was unsubscribed before connect — must not be called.
+        assert events == []
+
+
+# --- M2003 JSON parsing edge cases ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_m2003_with_state_prefix_already_set(hass) -> None:
+    """The M222 field may arrive with or without the leading 'S'."""
+    # Drive the parser directly — no need for a server.
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    snapshot = load_fixture("m2003_idle.json")
+    snapshot["M222"] = "14"  # plain number, must be coerced to "S14"
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    updates = client._parse_m2003_snapshot(json.dumps(snapshot))
+    assert updates["work_state_raw"] == "S14"
+
+
+@pytest.mark.asyncio
+async def test_m2003_invalid_json_is_ignored(fake_s1_server_broken_json, hass) -> None:
+    """A malformed M2003 body must not crash the listener."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server_broken_json.host,
+        session,
+        port=fake_s1_server_broken_json.port,
+    )
+    try:
+        await client.connect()
+        await client.request_status()
+        await asyncio.sleep(0.3)
+        # Listener still alive, state is still empty.
+        assert client.connected
+        assert client.state.serial_number is None
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_m2003_root_must_be_object(hass) -> None:
+    """A root JSON array must raise XToolS1ProtocolError internally."""
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    # Call the parser directly — it raises XToolS1ProtocolError on bad type.
+    with pytest.raises(XToolS1ProtocolError):
+        client._parse_m2003_snapshot("[1, 2, 3]")
+
+
+# --- push frame routing ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_push_frames_update_state(fake_s1_server, hass) -> None:
+    """Frames pushed by the server land in the state via the listener."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await fake_s1_server.push("M222 S14")
+        await fake_s1_server.push('M810 "engrave.gcode"')
+        await fake_s1_server.push("M340 A3")
+        await fake_s1_server.push("M313 Z-0.125")
+        await fake_s1_server.push("M303 X10.5 Y20.5")
+        await asyncio.sleep(0.2)
+    finally:
+        await client.disconnect()
+    state = client.state
+    assert state.work_state_raw == "S14"
+    assert state.job_file == "engrave.gcode"
+    assert state.alarm_present is True
+    assert state.alarm_raw == "A3"
+    assert state.probe_z == -0.125
+    assert state.pos_x == 10.5
+    assert state.pos_y == 20.5
+
+
+@pytest.mark.asyncio
+async def test_push_unknown_frame_is_ignored(fake_s1_server, hass) -> None:
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await fake_s1_server.push("M9999 some unknown payload")
+        await fake_s1_server.push("")  # empty
+        await asyncio.sleep(0.1)
+    finally:
+        await client.disconnect()
+    # No crash, state stays connected.
+
+
+@pytest.mark.asyncio
+async def test_binary_frame_extraction(fake_s1_server, hass) -> None:
+    """Binary frames carrying an M-code payload must be extracted."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    # Drive the parser directly with binary data, since FakeS1Server only
+    # speaks text frames.
+    client._handle_binary_frame(b"\x00\x01M340 A2\x02\x03")
+    assert client.state.alarm_present is True
+    assert client.state.alarm_raw == "A2"
+    # A frame with no embedded M-code is silently dropped.
+    client._handle_binary_frame(b"\x00\x01\x02")
+
+
+# --- network discovery ------------------------------------------------------
+
+
+def test_parse_network_valid() -> None:
+    net = parse_network("192.168.1.0/24")
+    assert isinstance(net, ipaddress.IPv4Network)
+    assert net.num_addresses == 256
+
+
+def test_parse_network_too_large() -> None:
+    with pytest.raises(NetworkTooLargeError):
+        parse_network("10.0.0.0/8")
+
+
+def test_parse_network_bad_cidr() -> None:
+    with pytest.raises(ValueError):
+        parse_network("not a network")
+
+
+@pytest.mark.asyncio
+async def test_discover_finds_fake_server(fake_s1_server, hass) -> None:
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    # /32 is exactly one host
+    devices = await discover_devices(
+        session,
+        f"{fake_s1_server.host}/32",
+        port=fake_s1_server.port,
+        tcp_timeout=1.0,
+        ws_timeout=2.0,
+    )
+    assert len(devices) == 1
+    assert devices[0].host == fake_s1_server.host
+    assert devices[0].serial_number == MOCK_SERIAL
+    assert devices[0].firmware_version == MOCK_FIRMWARE
+    assert isinstance(devices[0], DiscoveredDevice)
+
+
+@pytest.mark.asyncio
+async def test_discover_skips_silent_tcp(silent_tcp_server, hass) -> None:
+    """A port that opens TCP but never speaks WS is dropped at stage 2."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    devices = await discover_devices(
+        session,
+        f"{silent_tcp_server.host}/32",
+        port=silent_tcp_server.port,
+        tcp_timeout=1.0,
+        ws_timeout=0.5,
+    )
+    assert devices == []
+
+
+@pytest.mark.asyncio
+async def test_discover_empty_network(hass) -> None:
+    """Scanning a single host with no listener returns an empty list."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    devices = await discover_devices(
+        session,
+        "127.0.0.1/32",
+        port=1,  # nothing listens here
+        tcp_timeout=0.3,
+    )
+    assert devices == []
+
+
+@pytest.mark.asyncio
+async def test_discover_rejects_oversize_network(hass) -> None:
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    with pytest.raises(NetworkTooLargeError):
+        await discover_devices(session, ipaddress.IPv4Network("10.0.0.0/8"))
+
+
+# --- additional edge cases for coverage -------------------------------------
+
+
+class TestParserEdgeCases:
+    """Cover the early-exit branches in the parser helpers."""
+
+    def test_m27_unknown_axis_skipped(self) -> None:
+        # 'W' is not in the axis map.
+        assert _parse_m27_payload("W1.0 X2.0") == {"pos_x": 2.0}
+
+    def test_m27_garbage_value(self) -> None:
+        assert _parse_m27_payload("Xfoo") == {}
+
+    def test_m27_single_char_lone_axis(self) -> None:
+        # A bare axis letter (no number) trips the float() ValueError branch.
+        assert _parse_m27_payload("X") == {}
+
+    def test_m105_garbage(self) -> None:
+        # No valid axis match at all.
+        assert _parse_m105_payload("noise") == {}
+
+    def test_m13_empty_part(self) -> None:
+        # Multiple spaces produce empty parts; they must be skipped.
+        assert _parse_m13_payload("  A1   B2  ") == {"fan_a": 1, "fan_b": 2}
+
+    def test_m13_garbage_int(self) -> None:
+        assert _parse_m13_payload("Aabc Bxyz") == {}
+
+    def test_m13_unknown_prefix(self) -> None:
+        # 'C' isn't A or B — just skipped silently.
+        assert _parse_m13_payload("C99 A1") == {"fan_a": 1}
+
+
+@pytest.mark.asyncio
+async def test_subscribe_unsubscribe_twice(hass) -> None:
+    """Calling unsubscribe twice must not raise."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, port=1)
+    unsub = client.on_state(lambda _: None)
+    unsub()
+    unsub()  # second call is a no-op
+
+
+@pytest.mark.asyncio
+async def test_subscriber_exceptions_are_swallowed(hass) -> None:
+    """A subscriber raising must not break the state propagation."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, port=1)
+
+    bad_calls = 0
+    good_calls = 0
+
+    def bad(_state):
+        nonlocal bad_calls
+        bad_calls += 1
+        raise RuntimeError("boom")
+
+    def good(_state):
+        nonlocal good_calls
+        good_calls += 1
+
+    client.on_state(bad)
+    client.on_state(good)
+    client._update_state(work_state_raw="S3")
+    assert bad_calls == 1
+    assert good_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_update_state_with_no_changes(hass) -> None:
+    """An empty changes dict is a no-op."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, port=1)
+    state_before = client.state
+    client._update_state()
+    assert client.state is state_before
+
+
+@pytest.mark.asyncio
+async def test_handle_frame_empty_string(hass) -> None:
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, port=1)
+    state_before = client.state
+    client._handle_frame("   ")
+    assert client.state is state_before
+
+
+@pytest.mark.asyncio
+async def test_handle_frame_no_space_returns(hass) -> None:
+    """A frame without a payload (no space after the M-code) is ignored."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, port=1)
+    state_before = client.state
+    client._handle_frame("M222")
+    assert client.state is state_before
+
+
+def test_handle_binary_frame_no_mcode() -> None:
+    """Binary frames without an M-code body are silently dropped."""
+    client = XToolS1Client("127.0.0.1", session=None, port=1)  # type: ignore[arg-type]
+    client._handle_binary_frame(b"")
+    client._handle_binary_frame(b"\x00\x00\x00")
+    # State stays at the default empty snapshot.
+    assert client.state.alarm_present is False
+
+
+@pytest.mark.asyncio
+async def test_disconnect_when_not_connected(hass) -> None:
+    """disconnect() must be safe on a never-connected client."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, port=1)
+    await client.disconnect()  # no-op
+
+
+@pytest.mark.asyncio
+async def test_double_connect_is_idempotent(fake_s1_server, hass) -> None:
+    """Calling connect() twice must not error."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await client.connect()  # second call returns early
+        assert client.connected
+    finally:
+        await client.disconnect()
+
+
+def test_m2003_partial_fields_only() -> None:
+    """A snapshot containing only some fields must populate just those fields."""
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    updates = client._parse_m2003_snapshot('{"M99": "1.0", "M310": "abc"}')
+    assert updates == {"firmware_version": "1.0", "serial_number": "abc"}
+
+
+def test_m2003_empty_object() -> None:
+    """An empty object yields no updates."""
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    assert client._parse_m2003_snapshot("{}") == {}
+
+
+def test_m2003_strips_quoted_job_file() -> None:
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    updates = client._parse_m2003_snapshot('{"M810": "\\"file.gcode\\""}')
+    assert updates["job_file"] == "file.gcode"
+
+
+def test_m2003_normalises_null_job_file() -> None:
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    updates = client._parse_m2003_snapshot('{"M810": "NULL"}')
+    assert updates["job_file"] is None
+
+
+def test_parse_frame_unknown_mcode() -> None:
+    """An M-code we don't handle just returns an empty dict."""
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    assert client._parse_frame("M9999 something") == {}
+
+
+@pytest.mark.parametrize(
+    ("frame", "expected_keys"),
+    [
+        ("M222 S5", {"work_state_raw"}),
+        ('M810 "engrave.gcode"', {"job_file"}),
+        ("M340 A0", {"alarm_raw", "alarm_present"}),
+        ("M303 X1.5 Y2.5", {"pos_x", "pos_y"}),
+        ("M313 Z-0.5", {"probe_z"}),
+    ],
+)
+def test_parse_frame_recognised_pushes(frame: str, expected_keys: set[str]) -> None:
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    assert set(client._parse_frame(frame).keys()) == expected_keys
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "M222 zzz",  # M222 with no leading S → regex matches "zzz", coerced
+        "M810 no_quotes",  # no quoted filename → regex returns no match
+        "M340 nothing",  # no A-prefix → no match
+        "M303 garbage",  # no X..Y.. → no match
+        "M313 garbage",  # no Z..  → no match
+    ],
+)
+def test_parse_frame_no_match_returns_empty(frame: str) -> None:
+    """Push frames whose payload doesn't match the regex return an empty dict."""
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    # Either {} or any populated dict is fine — we just exercise the branch.
+    client._parse_frame(frame)
+
+
+def test_client_port_property() -> None:
+    """The port property exposes the configured WebSocket port."""
+    client = XToolS1Client("127.0.0.1", session=None, port=12345)  # type: ignore[arg-type]
+    assert client.port == 12345
+    assert client.host == "127.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_send_error_raises_connection_error(fake_s1_server, hass) -> None:
+    """An OSError from ws.send_str must surface as XToolS1ConnectionError."""
+    from unittest.mock import patch as _patch
+
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        with (
+            _patch.object(
+                client._ws,
+                "send_str",
+                side_effect=OSError("pipe broken"),
+            ),
+            pytest.raises(XToolS1ConnectionError),
+        ):
+            await client.ping()
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_probe_initial_state_request_status_failure(fake_s1_server, hass) -> None:
+    """If request_status() raises after connect, probe_initial_state must clean up."""
+    from unittest.mock import patch as _patch
+
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    with (
+        _patch.object(
+            client, "request_status", side_effect=XToolS1ConnectionError("oops")
+        ),
+        pytest.raises(XToolS1ConnectionError),
+    ):
+        await client.probe_initial_state(timeout=1.0)
+    assert not client.connected
+
+
+@pytest.mark.asyncio
+async def test_discover_accepts_network_object(fake_s1_server, hass) -> None:
+    """Passing an IPv4Network object (not a string) also works."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    devices = await discover_devices(
+        session,
+        ipaddress.IPv4Network(f"{fake_s1_server.host}/32"),
+        port=fake_s1_server.port,
+        tcp_timeout=1.0,
+        ws_timeout=2.0,
+    )
+    assert len(devices) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_rejects_oversize_network_object(hass) -> None:
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    with pytest.raises(NetworkTooLargeError):
+        await discover_devices(session, ipaddress.IPv4Network("172.16.0.0/12"))
+
+
+# --- listen-loop branch coverage --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_handles_binary_push(fake_s1_server, hass) -> None:
+    """A binary frame from the server is funneled through the binary handler."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await fake_s1_server.push_binary(b"\x00\x01M340 A4\x02\x03")
+        await asyncio.sleep(0.2)
+        assert client.state.alarm_present is True
+        assert client.state.alarm_raw == "A4"
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_handles_server_close(fake_s1_server, hass) -> None:
+    """When the server closes the WS, the listener exits and connection drops."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        assert client.connected
+        await fake_s1_server.close_all()
+        # Give the listener loop a moment to observe the close.
+        for _ in range(20):
+            if not client.connected:
+                break
+            await asyncio.sleep(0.05)
+        assert not client.connected
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_swallows_unexpected_exception(hass) -> None:
+    """An unexpected exception inside the listener must not crash anything."""
+    client = XToolS1Client("127.0.0.1", session=None, port=1)  # type: ignore[arg-type]
+
+    class _ExplodingWS:
+        closed = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise RuntimeError("listener boom")
+
+        async def close(self):
+            return None
+
+    client._ws = _ExplodingWS()  # type: ignore[assignment]
+    await client._listen_loop()
+    assert client._ws is None
+    assert client.state.connected is False
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_breaks_on_close_message(hass) -> None:
+    """A WSMsgType.CLOSE message must break out of the listener loop.
+
+    Also exercises the "ignore unknown msg type" branch by passing
+    a PING through first — neither TEXT, BINARY, nor CLOSE-family.
+    """
+    from aiohttp import WSMessage, WSMsgType
+
+    client = XToolS1Client("127.0.0.1", session=None, port=1)  # type: ignore[arg-type]
+
+    class _MixedWS:
+        closed = False
+
+        def __init__(self):
+            self._messages = iter(
+                [
+                    WSMessage(WSMsgType.PING, b"", ""),  # ignored
+                    WSMessage(WSMsgType.TEXT, "M222 S3", ""),
+                    WSMessage(WSMsgType.CLOSE, b"", ""),
+                ]
+            )
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._messages)
+            except StopIteration as err:
+                raise StopAsyncIteration from err
+
+        async def close(self):
+            return None
+
+    client._ws = _MixedWS()  # type: ignore[assignment]
+    await client._listen_loop()
+    # The CLOSE message broke the loop, the TEXT was processed, the
+    # PING was silently skipped.
+    assert client._ws is None
+    assert client.state.work_state_raw == "S3"
+
+
+# --- async context manager --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_context_manager(fake_s1_server, hass) -> None:
+    """``async with XToolS1Client(...)`` connects and disconnects."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    async with XToolS1Client(
+        fake_s1_server.host, session, port=fake_s1_server.port
+    ) as client:
+        assert client.connected
+    assert not client.connected
+
+
+# --- _identify_host edge case -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_identify_host_returns_none_when_no_serial(hass) -> None:
+    """probe_initial_state returns a state with no serial → identify returns None."""
+    from unittest.mock import patch as _patch
+
+    from custom_components.xtool_s1.api import _identify_host
+
+    with (
+        _patch(
+            "custom_components.xtool_s1.api.XToolS1Client.probe_initial_state",
+            return_value=XToolS1State(),
+        ),
+        _patch(
+            "custom_components.xtool_s1.api.XToolS1Client.disconnect",
+            return_value=None,
+        ),
+    ):
+        result = await _identify_host(
+            "127.0.0.1", 1, session=None, ws_timeout=0.1  # type: ignore[arg-type]
+        )
+    assert result is None

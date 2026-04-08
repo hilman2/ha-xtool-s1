@@ -1,0 +1,125 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Add an xTool S1",
+        "description": "Pick how to find your laser. The S1 firmware speaks WebSocket on port 8081.",
+        "menu_options": {
+          "scan_network": "Scan my local network",
+          "manual": "Enter an IP address"
+        }
+      },
+      "scan_network": {
+        "title": "Scan the local network",
+        "description": "Enter a CIDR range. Default is your Home Assistant subnet ({suggested}). Maximum 1024 hosts.",
+        "data": {
+          "network": "Network range (CIDR)"
+        },
+        "data_description": {
+          "network": "Example: 192.168.1.0/24"
+        }
+      },
+      "scan_results": {
+        "title": "Discovered devices",
+        "description": "Found {count} candidate device(s). Pick the one to add.",
+        "data": {
+          "host": "Device"
+        }
+      },
+      "manual": {
+        "title": "Enter the IP address",
+        "description": "IP address or hostname of the laser.",
+        "data": {
+          "host": "[%key:common::config_flow::data::host%]"
+        },
+        "data_description": {
+          "host": "Example: 192.168.1.42"
+        }
+      },
+      "reconfigure": {
+        "title": "Update the IP address",
+        "description": "Change the IP address of the configured laser. The serial number must match.",
+        "data": {
+          "host": "[%key:common::config_flow::data::host%]"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_host": "[%key:common::config_flow::error::invalid_host%]",
+      "invalid_network": "Not a valid CIDR network range.",
+      "network_too_large": "That range has too many hosts. Use /22 (1024 hosts) or smaller.",
+      "scan_failed": "The network scan failed. Please try again.",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
+      "no_devices_found": "No xTool S1 device found in that range.",
+      "wrong_device": "The device at this IP has a different serial number than the originally configured one.",
+      "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "idle": "Idle",
+          "ready": "Ready",
+          "measuring": "Measuring",
+          "starting": "Starting",
+          "running": "Running",
+          "finishing": "Finishing",
+          "unknown": "Unknown"
+        }
+      },
+      "firmware_version": {
+        "name": "Firmware version"
+      },
+      "serial_number": {
+        "name": "Serial number"
+      },
+      "tool_type": {
+        "name": "Tool type"
+      },
+      "job_file": {
+        "name": "Job file"
+      },
+      "position_x": {
+        "name": "Position X"
+      },
+      "position_y": {
+        "name": "Position Y"
+      },
+      "probe_z": {
+        "name": "Probe Z"
+      },
+      "fan_a": {
+        "name": "Fan A"
+      },
+      "fan_b": {
+        "name": "Fan B"
+      }
+    },
+    "binary_sensor": {
+      "running": {
+        "name": "Running"
+      },
+      "alarm": {
+        "name": "Alarm"
+      },
+      "connection": {
+        "name": "Connection"
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Cannot reach the xTool S1 at {host}: {error}"
+    },
+    "protocol_error": {
+      "message": "Unexpected reply from the xTool S1: {error}"
+    }
+  }
+}

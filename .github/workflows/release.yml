@@ -1,0 +1,57 @@
+name: Release
+
+# Triggered when a v* tag is pushed. The CI suite is re-run as a gate
+# (reusable workflow call) and only if every job in CI is green does
+# this workflow create a GitHub Release with the zipped integration.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    name: Re-run CI as a release gate
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish GitHub Release
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify manifest version matches tag
+        run: |
+          set -euo pipefail
+          MANIFEST_VERSION=$(python -c "import json; print(json.load(open('custom_components/xtool_s1/manifest.json'))['version'])")
+          TAG_VERSION="${{ steps.tag.outputs.version }}"
+          TAG_VERSION="${TAG_VERSION#v}"
+          if [ "$MANIFEST_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::manifest version ($MANIFEST_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "manifest version $MANIFEST_VERSION matches tag $TAG_VERSION"
+
+      - name: Build release zip
+        run: |
+          cd custom_components/xtool_s1
+          zip -r ../../xtool_s1.zip .
+          cd ../..
+          ls -la xtool_s1.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          name: ${{ steps.tag.outputs.version }}
+          generate_release_notes: true
+          files: xtool_s1.zip
+          fail_on_unmatched_files: true

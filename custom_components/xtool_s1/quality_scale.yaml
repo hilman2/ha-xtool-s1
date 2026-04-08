@@ -1,0 +1,103 @@
+rules:
+  # ----- Bronze -----
+  action-setup:
+    status: exempt
+    comment: This integration does not register any actions/services.
+  appropriate-polling:
+    status: done
+    comment: |
+      Polling is a 30 s watchdog only — fresh state arrives via the
+      WebSocket push path. The poll just reconnects on dead sockets.
+  brands:
+    status: exempt
+    comment: |
+      Since HA 2026.3 the home-assistant/brands repo no longer applies
+      to HACS custom integrations; the rule only matters for core.
+  common-modules: done
+  config-flow: done
+  config-flow-test-coverage: done
+  dependency-transparency: done
+  docs-actions:
+    status: exempt
+    comment: No actions/services exposed.
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions: done
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure: done
+  test-before-setup: done
+  unique-config-entry: done
+
+  # ----- Silver -----
+  action-exceptions:
+    status: exempt
+    comment: No actions exposed.
+  config-entry-unloading: done
+  docs-configuration-parameters:
+    status: exempt
+    comment: No options/configuration parameters beyond the host IP.
+  docs-installation-parameters: done
+  entity-unavailable: done
+  integration-owner: done
+  log-when-unavailable: done
+  parallel-updates: done
+  reauthentication-flow:
+    status: exempt
+    comment: |
+      The xTool S1 has no authentication. The connection is purely
+      the device's local IP and port 8081.
+  test-coverage: done
+
+  # ----- Gold -----
+  devices: done
+  diagnostics: done
+  discovery:
+    status: exempt
+    comment: |
+      The xTool S1 firmware does not advertise itself via mDNS,
+      Zeroconf, SSDP, or DHCP fingerprints. The integration ships
+      its own opt-in network scan instead (config flow "scan_network"
+      step), but auto-discovery against HA's discovery framework is
+      not possible.
+  discovery-update-info:
+    status: exempt
+    comment: See "discovery".
+  docs-data-update: done
+  docs-examples: done
+  docs-known-limitations: done
+  docs-supported-devices: done
+  docs-supported-functions: done
+  docs-troubleshooting: done
+  docs-use-cases: done
+  dynamic-devices:
+    status: exempt
+    comment: One config entry represents exactly one S1 laser.
+  entity-category: done
+  entity-device-class: done
+  entity-disabled-by-default: done
+  entity-translations: done
+  exception-translations: done
+  icon-translations: done
+  reconfiguration-flow: done
+  repair-issues:
+    status: exempt
+    comment: |
+      The integration has no recoverable failure modes that benefit
+      from a repair flow. Connection failures surface via
+      ConfigEntryNotReady / coordinator update_failed and the standard
+      HA "device unavailable" signalling.
+  stale-devices:
+    status: exempt
+    comment: One config entry == one device. Removing the entry removes the device.
+
+  # ----- Platinum (tracked but not yet claimed in manifest) -----
+  async-dependency: done
+  inject-websession: done
+  strict-typing:
+    status: todo
+    comment: |
+      mypy --strict not yet wired into CI. Once enabled and clean,
+      promote `quality_scale` to `platinum`.
