@@ -21,7 +21,7 @@ from .api import (
     discover_devices,
     parse_network,
 )
-from .const import DOMAIN
+from .const import DOMAIN, UDP_DISCOVERY_BROADCAST_ADDR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +53,20 @@ def _is_valid_host(host: str) -> bool:
     )
 
 
+def _validate_broadcast_target(value: str) -> None:
+    """Validate the user's broadcast/CIDR input.
+
+    Accepts a CIDR (validated and capped via :func:`parse_network`) or
+    a plain IPv4 literal (which is then used unicast/broadcast as-is).
+
+    Raises ``ValueError`` or :class:`NetworkTooLargeError` on failure.
+    """
+    if "/" in value:
+        parse_network(value)
+        return
+    ip_address(value)  # raises ValueError on bad input
+
+
 class XToolS1ConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for the xTool S1."""
 
@@ -61,12 +75,17 @@ class XToolS1ConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         super().__init__()
         self._discovered: list[DiscoveredDevice] = []
-        self._suggested_network: str = "192.168.1.0/24"
+        self._suggested_network: str = UDP_DISCOVERY_BROADCAST_ADDR
 
     # -- helpers ----------------------------------------------------------
 
     async def _suggest_network_default(self) -> str:
-        """Pick a sensible default CIDR for the scan form."""
+        """Pick a sensible default broadcast target for the scan form.
+
+        We prefer a /24 broadcast on the same interface HA is using
+        (e.g. ``192.168.32.255``) over a global ``255.255.255.255``
+        broadcast — many home routers drop the latter on Wi-Fi.
+        """
         try:
             adapters = await ha_network.async_get_adapters(self.hass)
         except Exception:
@@ -154,13 +173,14 @@ class XToolS1ConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_scan_network(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Ask for a CIDR range and run the scan."""
+        """Ask for a broadcast target and run a UDP discovery scan."""
         errors: dict[str, str] = {}
         suggested = await self._suggest_network_default()
 
         if user_input is not None:
+            target = user_input[CONF_NETWORK].strip()
             try:
-                network = parse_network(user_input[CONF_NETWORK])
+                _validate_broadcast_target(target)
             except NetworkTooLargeError:
                 errors[CONF_NETWORK] = "network_too_large"
             except ValueError:
@@ -168,7 +188,7 @@ class XToolS1ConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 session = async_get_clientsession(self.hass)
                 try:
-                    self._discovered = await discover_devices(session, network)
+                    self._discovered = await discover_devices(session, target)
                 except Exception:
                     _LOGGER.exception("Network scan failed")
                     errors["base"] = "scan_failed"
@@ -191,14 +211,18 @@ class XToolS1ConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_scan_results(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Let the user pick from the discovered devices."""
+        """Let the user pick from the discovered devices.
+
+        UDP discovery only carries IP/name/firmware — the device serial
+        we use as the unique_id has to come from a follow-up WebSocket
+        M2003 probe. We do that probe lazily *after* the user picks a
+        host so we don't hammer every found device on every scan.
+        """
         if not self._discovered:
             return self.async_abort(reason="no_devices_found")
 
         host_to_device = {d.host: d for d in self._discovered}
-        choices = {
-            d.host: f"{d.host}  •  serial {d.serial_number}" for d in self._discovered
-        }
+        choices = {d.host: self._format_choice(d) for d in self._discovered}
 
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -207,9 +231,15 @@ class XToolS1ConfigFlow(ConfigFlow, domain=DOMAIN):
             if device is None:
                 errors["base"] = "unknown"
             else:
-                return await self._create_entry_for_host(
-                    device.host, device.serial_number
-                )
+                try:
+                    serial = await self._probe(device.host)
+                except XToolS1ConnectionError:
+                    errors["base"] = "cannot_connect"
+                except Exception:
+                    _LOGGER.exception("Unexpected error probing xTool S1")
+                    errors["base"] = "unknown"
+                else:
+                    return await self._create_entry_for_host(device.host, serial)
 
         return self.async_show_form(
             step_id="scan_results",
@@ -219,6 +249,16 @@ class XToolS1ConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={"count": str(len(self._discovered))},
         )
+
+    @staticmethod
+    def _format_choice(device: DiscoveredDevice) -> str:
+        """Render a discovered device as a single-line dropdown label."""
+        parts = [device.host]
+        if device.name:
+            parts.append(device.name)
+        if device.firmware_version:
+            parts.append(f"fw {device.firmware_version}")
+        return "  •  ".join(parts)
 
     # -- reconfigure ------------------------------------------------------
 

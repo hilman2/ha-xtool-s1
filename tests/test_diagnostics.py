@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 import pytest
@@ -14,6 +12,7 @@ from custom_components.xtool_s1.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 
+from .conftest import patch_ports
 from .const import MOCK_SERIAL
 
 
@@ -28,7 +27,7 @@ async def test_diagnostics_redact_sensitive_fields(
         data={CONF_HOST: fake_s1_server.host},
     )
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 

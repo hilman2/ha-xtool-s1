@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from homeassistant.const import CONF_HOST, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -12,6 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.xtool_s1.const import DOMAIN
 
+from .conftest import patch_ports
 from .const import MOCK_SERIAL
 
 
@@ -28,7 +27,7 @@ async def test_all_expected_sensors_created(
     )
     entry.add_to_hass(hass)
 
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -96,7 +95,7 @@ async def test_status_sensor_native_value(
         data={CONF_HOST: fake_s1_server_running.host},
     )
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server_running.port):
+    with patch_ports(fake_s1_server_running):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -116,7 +115,7 @@ async def test_position_and_fan_values(
         data={CONF_HOST: fake_s1_server_running.host},
     )
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server_running.port):
+    with patch_ports(fake_s1_server_running):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -214,7 +213,7 @@ async def test_job_file_normalised(hass: HomeAssistant, fake_s1_server_running) 
         data={CONF_HOST: fake_s1_server_running.host},
     )
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server_running.port):
+    with patch_ports(fake_s1_server_running):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
     job = hass.states.get("sensor.xtool_s1_job_file")

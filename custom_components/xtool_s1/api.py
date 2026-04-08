@@ -1,31 +1,49 @@
-"""WebSocket client and protocol parser for the xTool S1 laser engraver.
+"""Network client and protocol parser for the xTool S1 laser engraver.
 
-The S1 firmware exposes a WebSocket on port 8081 that speaks a flat
-G-code/M-code dialect. The relevant messages are:
+The S1 exposes three network surfaces, all unauthenticated on the local
+LAN:
 
-* ``M2003``  → request a full status JSON snapshot
-* ``M303``   → ping / refresh X+Y position
-* ``M222``   → push: current work-state code (``S1``/``S3``/``S10``/...)
-* ``M810``   → push: currently loaded job filename
-* ``M340``   → push: alarm code (``A0`` = no alarm, anything else = alarm)
-* ``M313``   → push: last Z-probe reading
-* ``M9039``  → AP2 air-cleaner status (deferred to v2)
+* **TCP 8081 — WebSocket**: pushes state frames in real time. Uses a flat
+  M-code dialect (M2003 JSON snapshot, M222/M810/M340/M303/M313/M9039
+  push deltas). The xTool Creative Space app can kick this socket while
+  it's active — we have to handle that gracefully.
+* **TCP 8080 — HTTP REST**: a thin command gateway. ``POST /cmd`` with a
+  newline-separated body queues M-codes into the same machine pipeline
+  as the WebSocket. The HTTP write path **survives concurrent app
+  activity** that kicks the WS — so it's the right place for any write
+  operation we expose to HA. ``GET /system?action={mac,version}`` are
+  the only working reads.
+* **UDP 20000 — JSON discovery**: the S1 replies to a broadcast
+  ``{"requestId": <int>}`` with its IP, name and sub-firmware version.
+  Used by the config-flow scan to find the device on the LAN.
 
-Note about ``M13``: previous reverse-engineering work labeled M13's
-``A``/``B`` fields as exhaust fan speeds (RepRap-style). Empirical
-testing on a real S1 (smoke test 2026-04-08) showed those fields are
-actually the **internal fill-light brightness** — moving the brightness
-slider in xTool Creative Space changes both A and B in lockstep, while
-the audible exhaust fans are not represented at all. Real fan-state
-discovery is a v2 task; we expose only a single "Light Brightness"
-reading from this field for now.
+Critical M-code reference (verified against real hardware
+2026-04-08 against hilman2's device):
 
-The wire format is mostly ASCII, but some frames (notably ``M9039``) arrive
-as binary frames with a binary header/footer wrapping the M-code payload.
+* ``M2003`` → request full status JSON snapshot, reply on the WS
+* ``M303``  → ping / refresh X+Y position, reply on the WS
+* ``M222``  → push: current work-state code (``S1``/``S3``/``S10``/...)
+* ``M810``  → push: currently loaded job filename
+* ``M340``  → push: alarm code (``A0`` = no alarm, anything else = alarm)
+* ``M313``  → push: last Z-probe reading
+* ``M13``   → fill-light brightness, **read AND write** (``M13 A<n> B<n>``)
+* ``M9039`` → AP2 air-cleaner status (deferred to v2)
 
-Protocol details were originally reverse-engineered in
-https://github.com/BassXT/xtool/pull/23. This module is a clean
-greenfield reimplementation focused on the S1.
+Note about ``M13``: the original BassXT reverse-engineering work labeled
+``A``/``B`` as exhaust fan speeds (a RepRap-style guess). Live testing
+showed those are the internal **fill-light brightness** — moving the
+brightness slider in XCS changes both fields in lockstep, the audible
+exhaust fans are not represented at all in M2003. Real fan-state
+discovery is a v2 task. ``M13`` is also a write command — sending
+``POST /cmd`` body ``M13 A50 B50`` actually changes the brightness.
+
+Some frames (notably ``M9039``) arrive as binary WebSocket frames with a
+non-printable header/footer wrapping the M-code payload — we extract
+the printable section.
+
+Original WS protocol details were reverse-engineered in
+https://github.com/BassXT/xtool/pull/23. The HTTP and UDP layers were
+discovered from scratch in this project.
 """
 
 from __future__ import annotations
@@ -40,6 +58,7 @@ import logging
 import re
 from typing import Any
 
+import aiohttp
 from aiohttp import (
     ClientError,
     ClientSession,
@@ -50,10 +69,11 @@ from aiohttp import (
 
 from .const import (
     CONFIG_FLOW_PROBE_TIMEOUT,
-    SCAN_DEFAULT_CONCURRENCY,
+    HTTP_PORT,
     SCAN_MAX_HOSTS,
-    SCAN_TCP_TIMEOUT,
-    SCAN_WS_TIMEOUT,
+    UDP_DISCOVERY_BROADCAST_ADDR,
+    UDP_DISCOVERY_PORT,
+    UDP_DISCOVERY_TIMEOUT,
     WS_PORT,
 )
 
@@ -251,9 +271,11 @@ class XToolS1Client:
         session: ClientSession,
         *,
         port: int = WS_PORT,
+        http_port: int = HTTP_PORT,
     ) -> None:
         self._host = host
         self._port = port
+        self._http_port = http_port
         self._session = session
         self._ws: ClientWebSocketResponse | None = None
         self._listen_task: asyncio.Task[None] | None = None
@@ -351,19 +373,95 @@ class XToolS1Client:
     async def set_light_brightness(self, brightness: int) -> None:
         """Set the internal fill-light brightness (0-100).
 
-        Confirmed working against a real S1 — ``M13 A{n} B{n}`` is
-        accepted as a write command and the device echoes it back.
-        Both A and B channels carry the same value because the app
-        always sets them in lockstep.
+        Routed through the HTTP ``POST /cmd`` gateway rather than the
+        WebSocket so the write survives concurrent XCS-app activity that
+        kicks WS connections. Both A and B channels carry the same
+        value because the app always sets them in lockstep.
+
+        Confirmed working against a real S1 on 2026-04-08.
         """
         clamped = max(0, min(100, int(brightness)))
-        await self._send(f"M13 A{clamped} B{clamped}\n")
+        await self.send_command_http(f"M13 A{clamped} B{clamped}")
         # Update state optimistically so the entity reflects the change
-        # without waiting for the next push.
+        # without waiting for the next push frame.
         self._update_state(
             light_brightness_a=clamped,
             light_brightness_b=clamped,
         )
+
+    # -- HTTP gateway (port 8080) --------------------------------------
+
+    @property
+    def http_port(self) -> int:
+        """Return the configured HTTP port."""
+        return self._http_port
+
+    @property
+    def _http_base(self) -> str:
+        return f"http://{self._host}:{self._http_port}"
+
+    async def send_command_http(self, gcode: str | list[str]) -> None:
+        """Send one or more M-codes via the HTTP ``POST /cmd`` gateway.
+
+        Fire-and-forget — the device acks with ``{"result":"ok"}`` and
+        the actual M-code reply (if any) is delivered as a WebSocket
+        push frame to all connected clients. We do NOT depend on the
+        WS being open here: HTTP writes work even when the XCS app has
+        kicked us off the WS.
+
+        Raises:
+            XToolS1ConnectionError: if the HTTP request fails.
+        """
+        if isinstance(gcode, str):
+            body_str = gcode if gcode.endswith("\n") else gcode + "\n"
+        else:
+            body_str = "".join(
+                (line if line.endswith("\n") else line + "\n") for line in gcode
+            )
+        try:
+            async with self._session.post(
+                f"{self._http_base}/cmd",
+                data=body_str.encode("ascii"),
+                timeout=aiohttp.ClientTimeout(total=_SEND_TIMEOUT),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            ) as resp:
+                if resp.status != 200:
+                    raise XToolS1ConnectionError(
+                        f"HTTP /cmd returned status {resp.status}"
+                    )
+                # Drain the body so the connection can be released.
+                await resp.read()
+        except (TimeoutError, ClientError, OSError) as err:
+            _LOGGER.debug("S1 %s HTTP /cmd failed: %s", self._host, err)
+            raise XToolS1ConnectionError(str(err)) from err
+
+    async def fetch_mac_http(self) -> str | None:
+        """Read the device MAC via ``GET /system?action=mac``."""
+        return await self._fetch_system_action("mac")
+
+    async def fetch_subfirmware_http(self) -> str | None:
+        """Read the sub-firmware version via ``GET /system?action=version``.
+
+        This is the same string the WS-side ``M2099`` field carries.
+        Useful as a lightweight HTTP heartbeat when the WS is being
+        kicked by the app.
+        """
+        return await self._fetch_system_action("version")
+
+    async def _fetch_system_action(self, action: str) -> str | None:
+        try:
+            async with self._session.get(
+                f"{self._http_base}/system",
+                params={"action": action},
+                timeout=aiohttp.ClientTimeout(total=_SEND_TIMEOUT),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                text = (await resp.text()).strip()
+                return text or None
+        except (TimeoutError, ClientError, OSError) as err:
+            _LOGGER.debug("S1 %s /system?action=%s failed: %s", self._host, action, err)
+            raise XToolS1ConnectionError(str(err)) from err
 
     async def probe_initial_state(
         self, timeout: float = CONFIG_FLOW_PROBE_TIMEOUT
@@ -605,19 +703,27 @@ class XToolS1Client:
 
 @dataclass(slots=True, frozen=True)
 class DiscoveredDevice:
-    """A device found by :func:`discover_devices`."""
+    """A device found by :func:`discover_devices`.
+
+    The fields populated by the UDP discovery beacon (host, name,
+    firmware_version) are always present; serial_number is filled in
+    later by a WebSocket M2003 probe in the config flow.
+    """
 
     host: str
-    serial_number: str
+    name: str | None = None
     firmware_version: str | None = None
+    serial_number: str | None = None
 
 
 class NetworkTooLargeError(XToolS1Error):
-    """Raised when a network range exceeds :data:`SCAN_MAX_HOSTS`."""
+    """Raised when a CIDR range passed to :func:`parse_network` is too large."""
 
 
 def parse_network(value: str) -> ipaddress.IPv4Network:
     """Parse a CIDR string and reject ranges that are too large.
+
+    Used by the config flow to validate the user's broadcast input.
 
     Raises:
         ValueError: if ``value`` is not a valid CIDR.
@@ -633,81 +739,111 @@ def parse_network(value: str) -> ipaddress.IPv4Network:
     return network
 
 
-async def _tcp_probe(host: str, port: int, timeout: float) -> bool:
-    """Return True if a TCP connection to ``host:port`` succeeds quickly."""
+# --- UDP discovery ---------------------------------------------------------
+
+
+def _resolve_broadcast_target(target: str) -> str:
+    """Turn a CIDR (or plain IP) into a broadcast address.
+
+    ``192.168.1.0/24``  → ``192.168.1.255``
+    ``192.168.1.255``   → ``192.168.1.255``
+    ``255.255.255.255`` → ``255.255.255.255``
+    """
     try:
-        _reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=timeout
+        return str(ipaddress.IPv4Network(target, strict=False).broadcast_address)
+    except ValueError:
+        # Already a plain IP — pass through.
+        return target
+
+
+class _UDPDiscoveryProtocol(asyncio.DatagramProtocol):
+    """Collect JSON discovery replies from xTool S1 devices on UDP 20000."""
+
+    def __init__(self, request_id: int) -> None:
+        self.request_id = request_id
+        self.replies: list[DiscoveredDevice] = []
+        self._seen_hosts: set[str] = set()
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        host = addr[0]
+        if host in self._seen_hosts:
+            return
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict):
+            return
+        # The S1 echoes the requestId — drop foreign replies just in case.
+        if payload.get("requestId") not in (self.request_id, str(self.request_id)):
+            return
+        self._seen_hosts.add(host)
+        name = payload.get("name") or None
+        version = payload.get("version") or None
+        ip = str(payload.get("ip") or host)
+        self.replies.append(
+            DiscoveredDevice(
+                host=ip,
+                name=name,
+                firmware_version=version,
+            )
         )
-    except (TimeoutError, OSError):
-        return False
-    with contextlib.suppress(TimeoutError, OSError):
-        writer.close()
-        await writer.wait_closed()
-    return True
 
 
-async def _identify_host(
-    host: str, port: int, session: ClientSession, ws_timeout: float
-) -> DiscoveredDevice | None:
-    """Try to talk M2003 to ``host``. Return a :class:`DiscoveredDevice` on success."""
-    client = XToolS1Client(host, session, port=port)
-    try:
-        state = await client.probe_initial_state(timeout=ws_timeout)
-    except XToolS1Error:
-        return None
-    finally:
-        await client.disconnect()
-    if state.serial_number is None:
-        return None
-    return DiscoveredDevice(
-        host=host,
-        serial_number=state.serial_number,
-        firmware_version=state.firmware_version,
+async def discover_via_udp(
+    broadcast_target: str = UDP_DISCOVERY_BROADCAST_ADDR,
+    *,
+    port: int = UDP_DISCOVERY_PORT,
+    timeout: float = UDP_DISCOVERY_TIMEOUT,
+    request_id: int | None = None,
+) -> list[DiscoveredDevice]:
+    """Broadcast a JSON discovery request and collect S1 replies.
+
+    Sends ``{"requestId": <id>}`` to ``broadcast_target`` on UDP
+    ``port`` and listens for ``timeout`` seconds. Every xTool S1 on the
+    LAN that receives the broadcast answers with its IP, name and
+    sub-firmware version.
+
+    ``broadcast_target`` may be either a plain IP literal (in which
+    case the request is sent unicast — useful when you already know
+    the host) or a CIDR (in which case its broadcast address is used).
+    The ``port`` parameter is overridable to make the function unit
+    testable against a fake UDP server on a high port.
+    """
+    if request_id is None:
+        request_id = int.from_bytes(__import__("os").urandom(3), "big")
+    target = _resolve_broadcast_target(broadcast_target)
+    payload = json.dumps({"requestId": request_id}).encode("ascii")
+
+    loop = asyncio.get_running_loop()
+    protocol = _UDPDiscoveryProtocol(request_id)
+    transport, _ = await loop.create_datagram_endpoint(
+        lambda: protocol,
+        local_addr=("0.0.0.0", 0),
+        allow_broadcast=True,
     )
+    try:
+        transport.sendto(payload, (target, port))
+        await asyncio.sleep(timeout)
+    finally:
+        transport.close()
+    return list(protocol.replies)
 
 
 async def discover_devices(
     session: ClientSession,
-    network: ipaddress.IPv4Network | str,
+    broadcast_target: str = UDP_DISCOVERY_BROADCAST_ADDR,
     *,
-    port: int = WS_PORT,
-    concurrency: int = SCAN_DEFAULT_CONCURRENCY,
-    tcp_timeout: float = SCAN_TCP_TIMEOUT,
-    ws_timeout: float = SCAN_WS_TIMEOUT,
+    port: int = UDP_DISCOVERY_PORT,
+    timeout: float = UDP_DISCOVERY_TIMEOUT,
 ) -> list[DiscoveredDevice]:
-    """Scan ``network`` for xTool S1 devices on ``port``.
+    """Find xTool S1 devices on the local network.
 
-    The scan runs a fast parallel TCP probe first; only hosts that
-    answer on the target port are then escalated to a WebSocket M2003
-    probe to confirm they are actually an S1 (and to read their serial).
-
-    Raises:
-        NetworkTooLargeError: if ``network`` exceeds :data:`SCAN_MAX_HOSTS`.
+    Thin wrapper around :func:`discover_via_udp` — kept as the public
+    entry point so callers don't need to know whether the underlying
+    transport is UDP, TCP, or anything else. The ``session`` argument
+    is unused for the UDP path but kept for backwards compatibility
+    with callers that want a future fallback to switch to.
     """
-    if isinstance(network, str):
-        network = parse_network(network)
-    elif network.num_addresses > SCAN_MAX_HOSTS:
-        raise NetworkTooLargeError(
-            f"network {network} has {network.num_addresses} hosts; "
-            f"max is {SCAN_MAX_HOSTS}"
-        )
-
-    semaphore = asyncio.Semaphore(concurrency)
-    candidates: list[str] = []
-
-    async def _stage1(host: str) -> None:
-        async with semaphore:
-            if await _tcp_probe(host, port, tcp_timeout):
-                candidates.append(host)
-
-    await asyncio.gather(*(_stage1(str(addr)) for addr in network.hosts()))
-
-    # Stage 2: confirm with WebSocket M2003 (sequentially — typically only
-    # 0-2 candidates per home net, no need for parallelism here).
-    found: list[DiscoveredDevice] = []
-    for host in candidates:
-        device = await _identify_host(host, port, session, ws_timeout)
-        if device is not None:
-            found.append(device)
-    return found
+    del session  # reserved for a future HTTP-based fallback
+    return await discover_via_udp(broadcast_target, port=port, timeout=timeout)

@@ -20,22 +20,49 @@ from day one.
 
 ## Status
 
-**v1.0** — S1 core only.
+**v1.0** — S1 core only, with the HTTP/UDP layers we reverse-engineered
+from scratch (no other public integration uses them).
 
 Planned for v2:
 - AP2 air cleaner support (M9039 push frames)
 - Real exhaust-fan / air-assist state — not yet found in any documented
   M-code; needs an active-job packet capture to map. Until then, the
   audible fans on the S1 are not surfaced as sensors.
+- Pause / Resume / Stop buttons — once we know the M-code the XCS app
+  uses for them (also a packet capture / Wireshark task).
+
+## Coexistence with the XCS app
+
+The S1 firmware has a quirk: while the **xTool Creative Space app** is
+actively talking to the laser, it can kick other clients off the
+WebSocket on port 8081. This integration is designed to coexist:
+
+- **Writes** (e.g. setting the fill light) go through the HTTP gateway
+  on port 8080, which survives WS kicks. So you can dim the laser
+  light from HA even while the XCS app is open.
+- **Reads** go through the WebSocket. When the app kicks us, the
+  coordinator backs off (1s → 5s → 15s → 1min → 5min) instead of
+  fighting the app for the socket. While in backoff it polls a cheap
+  HTTP heartbeat (`/system?action=mac`) so the entry stays
+  *available* — entities show their last known state until the WS
+  comes back.
 
 ---
 
 ## Features
 
 - Native config flow — no YAML
-- **Network scan** for the S1 (port 8081 is rare in home nets) or manual IP entry
-- **Push-based** WebSocket connection — state updates arrive in real time
-- 30-second watchdog poll auto-reconnects on dropped sockets
+- **UDP-broadcast discovery** on port 20000 — finds the S1 on the LAN
+  in a single packet, no IP scan
+- **Push-based** WebSocket connection on port 8081 — state updates
+  arrive in real time
+- **HTTP write path** on port 8080 (`POST /cmd`) — write commands
+  survive concurrent xTool Creative Space app activity, which
+  otherwise kicks the WebSocket
+- **Exponential reconnect backoff** (1s → 5s → 15s → 1min → 5min) —
+  the integration doesn't fight the app for the WebSocket
+- **HTTP heartbeat fallback** — while the WS is being kicked the
+  integration stays *available* by polling `GET /system?action=mac`
 - Reconfigure flow with serial-number guard for DHCP-shifted devices
 - Diagnostic export with the host IP and serial redacted
 - English + German UI translations, icon translations, exception translations
@@ -55,9 +82,12 @@ Planned for v2:
 | sensor | Firmware Version | — | *Diagnostic* |
 | sensor | Serial Number | — | *Diagnostic, off by default* |
 | sensor | Tool Type | — | *Diagnostic* |
+| sensor | Auxiliary firmware 1/2 | — | *Diagnostic, off by default* |
+| sensor | Tool firmware | — | *Diagnostic, off by default* |
 | binary_sensor | Running | `running` | A job is actively executing |
 | binary_sensor | Alarm | `problem` | Machine reports an alarm condition |
 | binary_sensor | Connection | `connectivity` | WebSocket session is up *(diagnostic)* |
+| **light** | Fill light | brightness | Dimmable interior fill light, controllable from HA |
 
 ---
 

@@ -145,3 +145,111 @@ async def test_watchdog_happy_ping_path(hass: HomeAssistant, fake_s1_server) -> 
         assert isinstance(second, XToolS1State)
     finally:
         await coordinator.async_shutdown()
+
+
+# --- backoff and HTTP heartbeat ---------------------------------------------
+
+
+async def _build_with_http(
+    hass: HomeAssistant, fake_server
+) -> tuple[XToolS1Coordinator, XToolS1Client, MockConfigEntry]:
+    """Build a coordinator wired to both the WS and HTTP fake server ports."""
+    entry = _mock_entry()
+    entry.add_to_hass(hass)
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_server.host,
+        session,
+        port=fake_server.port,
+        http_port=fake_server.http_port,
+    )
+    coordinator = XToolS1Coordinator(hass, entry, client)
+    return coordinator, client, entry
+
+
+@pytest.mark.asyncio
+async def test_kick_detection_climbs_backoff(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """A drop within ~10s of connect is treated as a kick and climbs the ladder."""
+    coordinator, client, _entry = await _build_with_http(hass, fake_s1_server)
+    try:
+        await coordinator._async_update_data()
+        # Force the client into a "lost connection" state and re-tick.
+        with (
+            patch.object(client, "ping", side_effect=XToolS1ConnectionError("kicked")),
+            pytest.raises(UpdateFailed),
+        ):
+            await coordinator._async_update_data()
+        # The backoff should now be active and the index should be > 0
+        assert coordinator._backoff_index > 0
+        assert coordinator._is_in_backoff()
+    finally:
+        await coordinator.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_http_heartbeat_keeps_entry_available(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """While in backoff, an HTTP heartbeat returns the cached state."""
+    coordinator, client, _entry = await _build_with_http(hass, fake_s1_server)
+    try:
+        await coordinator._async_update_data()
+        # Disconnect and force the coordinator into backoff
+        await client.disconnect()
+        coordinator._next_reconnect_at = float("inf")  # always in backoff
+        coordinator._backoff_index = 1
+
+        state = await coordinator._async_update_data()
+        assert isinstance(state, XToolS1State)
+        # The fake server's HTTP /system?action=mac is alive — heartbeat OK
+    finally:
+        await coordinator.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_http_heartbeat_failure_raises_update_failed(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """If both WS and HTTP heartbeat fail, UpdateFailed is raised."""
+    coordinator, client, _entry = await _build_with_http(hass, fake_s1_server)
+    try:
+        await coordinator._async_update_data()
+        await client.disconnect()
+        coordinator._next_reconnect_at = float("inf")
+        # Make the HTTP heartbeat fail too
+        with (
+            patch.object(
+                client,
+                "fetch_mac_http",
+                side_effect=XToolS1ConnectionError("offline"),
+            ),
+            pytest.raises(UpdateFailed),
+        ):
+            await coordinator._async_update_data()
+    finally:
+        await coordinator.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_backoff_caps_at_top_of_ladder(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """Repeated kicks should not push the backoff index past the ladder."""
+    from custom_components.xtool_s1.const import RECONNECT_BACKOFF_SECONDS
+
+    coordinator, _client, _entry = await _build_with_http(hass, fake_s1_server)
+    try:
+        # Climb the ladder by manually noting kicks
+        for _ in range(len(RECONNECT_BACKOFF_SECONDS) + 5):
+            coordinator._note_disconnected(kicked=True)
+        assert coordinator._backoff_index == len(RECONNECT_BACKOFF_SECONDS) - 1
+
+        # Same with soft drops
+        coordinator._backoff_index = 0
+        for _ in range(len(RECONNECT_BACKOFF_SECONDS) + 5):
+            coordinator._note_disconnected(kicked=False)
+        assert coordinator._backoff_index == len(RECONNECT_BACKOFF_SECONDS) - 1
+    finally:
+        await coordinator.async_shutdown()

@@ -55,16 +55,21 @@ rules:
   devices: done
   diagnostics: done
   discovery:
-    status: exempt
+    status: done
     comment: |
-      The xTool S1 firmware does not advertise itself via mDNS,
-      Zeroconf, SSDP, or DHCP fingerprints. The integration ships
-      its own opt-in network scan instead (config flow "scan_network"
-      step), but auto-discovery against HA's discovery framework is
-      not possible.
+      The xTool S1 has its own UDP discovery beacon on port 20000:
+      send a JSON `{"requestId": <int>}` broadcast on the local LAN
+      and every S1 replies with its IP, name and sub-firmware version.
+      Implemented in `api.discover_via_udp` and exposed via the
+      config-flow "scan_network" step. Not registered with HA's core
+      mDNS/SSDP framework because the protocol is xTool-proprietary.
   discovery-update-info:
-    status: exempt
-    comment: See "discovery".
+    status: done
+    comment: |
+      The reconfigure flow re-runs the M2003 probe and refuses to
+      update the entry's host if the responding device's serial
+      number does not match the configured one (`wrong_device`
+      abort).
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done

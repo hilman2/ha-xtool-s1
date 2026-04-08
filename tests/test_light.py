@@ -15,6 +15,7 @@ from custom_components.xtool_s1.api import XToolS1ConnectionError
 from custom_components.xtool_s1.const import DOMAIN
 from custom_components.xtool_s1.light import _ha_to_laser, _laser_to_ha
 
+from .conftest import patch_ports
 from .const import MOCK_SERIAL
 
 
@@ -54,7 +55,7 @@ async def test_light_initial_state_off(hass: HomeAssistant, fake_s1_server) -> N
     """The idle fixture has M13 A0 B0 → light is off."""
     entry = _entry(fake_s1_server.host)
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -72,7 +73,7 @@ async def test_light_initial_state_on(
     """The running fixture has M13 A85 → light is on at 85 %."""
     entry = _entry(fake_s1_server_running.host)
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server_running.port):
+    with patch_ports(fake_s1_server_running):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -90,7 +91,7 @@ async def test_light_turn_on_with_brightness(
     """turn_on with brightness sends M13 with the converted value."""
     entry = _entry(fake_s1_server.host)
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -104,7 +105,7 @@ async def test_light_turn_on_with_brightness(
 
     # 128 → 50 % on the laser scale
     assert (
-        await fake_s1_server.wait_for_received(lambda f: f == "M13 A50 B50")
+        await fake_s1_server.wait_for_http_received(lambda f: f == "M13 A50 B50")
     ) is not None
     state = hass.states.get("light.xtool_s1_fill_light")
     assert state.state == STATE_ON
@@ -118,7 +119,7 @@ async def test_light_turn_on_no_brightness_uses_full(
     """turn_on without brightness while off sends M13 A100 B100."""
     entry = _entry(fake_s1_server.host)
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -131,7 +132,7 @@ async def test_light_turn_on_no_brightness_uses_full(
         await hass.async_block_till_done()
 
     assert (
-        await fake_s1_server.wait_for_received(lambda f: f == "M13 A100 B100")
+        await fake_s1_server.wait_for_http_received(lambda f: f == "M13 A100 B100")
     ) is not None
 
 
@@ -142,12 +143,12 @@ async def test_light_turn_on_no_brightness_keeps_current(
     """turn_on without brightness while already on keeps the current value."""
     entry = _entry(fake_s1_server_running.host)
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server_running.port):
+    with patch_ports(fake_s1_server_running):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
         # Drop everything received during setup so the assertion is clean.
-        fake_s1_server_running.received.clear()
+        fake_s1_server_running.http_received.clear()
 
         await hass.services.async_call(
             "light",
@@ -159,7 +160,9 @@ async def test_light_turn_on_no_brightness_keeps_current(
 
     # Light is at 85 — turn_on without brightness should keep 85.
     assert (
-        await fake_s1_server_running.wait_for_received(lambda f: f == "M13 A85 B85")
+        await fake_s1_server_running.wait_for_http_received(
+            lambda f: f == "M13 A85 B85"
+        )
     ) is not None
 
 
@@ -193,11 +196,11 @@ async def test_light_turn_off(hass: HomeAssistant, fake_s1_server_running) -> No
     """turn_off sends M13 A0 B0."""
     entry = _entry(fake_s1_server_running.host)
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server_running.port):
+    with patch_ports(fake_s1_server_running):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        fake_s1_server_running.received.clear()
+        fake_s1_server_running.http_received.clear()
         await hass.services.async_call(
             "light",
             "turn_off",
@@ -207,7 +210,7 @@ async def test_light_turn_off(hass: HomeAssistant, fake_s1_server_running) -> No
         await hass.async_block_till_done()
 
     assert (
-        await fake_s1_server_running.wait_for_received(lambda f: f == "M13 A0 B0")
+        await fake_s1_server_running.wait_for_http_received(lambda f: f == "M13 A0 B0")
     ) is not None
     state = hass.states.get("light.xtool_s1_fill_light")
     assert state.state == STATE_OFF
@@ -257,7 +260,7 @@ async def test_light_turn_on_failure_raises_home_assistant_error(
     """A connection failure during set_light_brightness becomes HomeAssistantError."""
     entry = _entry(fake_s1_server.host)
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 

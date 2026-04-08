@@ -13,6 +13,7 @@ from custom_components.xtool_s1.api import XToolS1ConnectionError
 from custom_components.xtool_s1.const import DOMAIN
 from custom_components.xtool_s1.coordinator import XToolS1RuntimeData
 
+from .conftest import patch_ports
 from .const import MOCK_SERIAL
 
 
@@ -54,7 +55,7 @@ async def test_setup_and_unload(hass: HomeAssistant, fake_s1_server) -> None:
     )
     entry.add_to_hass(hass)
 
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -93,7 +94,7 @@ async def test_unload_skips_shutdown_when_platforms_fail(
         data={CONF_HOST: fake_s1_server.host},
     )
     entry.add_to_hass(hass)
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -123,7 +124,7 @@ async def test_update_listener_reloads_entry(
     )
     entry.add_to_hass(hass)
 
-    with patch("custom_components.xtool_s1.const.WS_PORT", fake_s1_server.port):
+    with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         first_runtime = entry.runtime_data

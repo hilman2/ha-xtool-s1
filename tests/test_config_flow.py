@@ -158,23 +158,23 @@ async def test_scan_flow_happy_path(hass: HomeAssistant) -> None:
     assert result["step_id"] == "scan_network"
 
     discovered = [
-        DiscoveredDevice(
-            host=MOCK_HOST, serial_number=MOCK_SERIAL, firmware_version="1.2.3"
-        )
+        DiscoveredDevice(host=MOCK_HOST, name="TestLab S1", firmware_version="1.2.3")
     ]
     with patch(
         "custom_components.xtool_s1.config_flow.discover_devices",
         return_value=discovered,
     ):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"network": "192.168.1.0/24"}
+            result["flow_id"], {"network": "255.255.255.255"}
         )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "scan_results"
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_HOST: MOCK_HOST}
-    )
+    # The serial-number probe is mocked — discover_via_udp doesn't carry it.
+    with _patch_probe():
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: MOCK_HOST}
+        )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_HOST: MOCK_HOST}
     assert result["result"].unique_id == MOCK_SERIAL
@@ -192,7 +192,7 @@ async def test_scan_flow_no_devices_aborts(hass: HomeAssistant) -> None:
         return_value=[],
     ):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"network": "192.168.1.0/24"}
+            result["flow_id"], {"network": "255.255.255.255"}
         )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "no_devices_found"
@@ -210,6 +210,25 @@ async def test_scan_flow_invalid_network(hass: HomeAssistant) -> None:
     )
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"network": "invalid_network"}
+
+
+async def test_scan_flow_with_cidr_input(hass: HomeAssistant) -> None:
+    """A valid /24 input goes through the CIDR validation branch."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "scan_network"}
+    )
+    with patch(
+        "custom_components.xtool_s1.config_flow.discover_devices",
+        return_value=[],
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"network": "192.168.1.0/24"}
+        )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "no_devices_found"
 
 
 async def test_scan_flow_network_too_large(hass: HomeAssistant) -> None:
@@ -238,7 +257,7 @@ async def test_scan_flow_scan_failed(hass: HomeAssistant) -> None:
         side_effect=RuntimeError("network died"),
     ):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"network": "192.168.1.0/24"}
+            result["flow_id"], {"network": "255.255.255.255"}
         )
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "scan_failed"}
@@ -373,7 +392,7 @@ async def test_suggest_network_default_skips_loopback(hass: HomeAssistant) -> No
 async def test_suggest_network_default_handles_adapter_error(
     hass: HomeAssistant,
 ) -> None:
-    """When async_get_adapters raises, the default falls back to 192.168.1.0/24."""
+    """When async_get_adapters raises, the default falls back to 255.255.255.255."""
     with patch(
         "custom_components.xtool_s1.config_flow.ha_network.async_get_adapters",
         side_effect=RuntimeError("adapter boom"),
@@ -386,7 +405,7 @@ async def test_suggest_network_default_handles_adapter_error(
         )
     schema = result["data_schema"].schema
     network_default = next((k.default() for k in schema if str(k) == "network"), None)
-    assert network_default == "192.168.1.0/24"
+    assert network_default == "255.255.255.255"
 
 
 async def test_suggest_network_skips_disabled_adapter(hass: HomeAssistant) -> None:
@@ -470,12 +489,50 @@ async def test_scan_results_unknown_host_sets_error(hass: HomeAssistant) -> None
     flow = XToolS1ConfigFlow()
     flow.hass = hass
     flow._discovered = [
-        DiscoveredDevice(host="10.0.0.1", serial_number="A", firmware_version="1")
+        DiscoveredDevice(host="10.0.0.1", name="x", firmware_version="1")
     ]
     # Direct invocation bypasses voluptuous, so the dict-lookup miss path runs.
     result = await flow.async_step_scan_results({CONF_HOST: "10.0.0.99"})
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "unknown"}
+
+
+async def test_scan_results_probe_failures(hass: HomeAssistant) -> None:
+    """A probe failure or unexpected error after host pick sets the right error."""
+    from custom_components.xtool_s1.api import DiscoveredDevice, XToolS1ConnectionError
+    from custom_components.xtool_s1.config_flow import XToolS1ConfigFlow
+
+    flow = XToolS1ConfigFlow()
+    flow.hass = hass
+    flow._discovered = [
+        DiscoveredDevice(host="10.0.0.1", name="x", firmware_version="1")
+    ]
+    with patch.object(
+        XToolS1ConfigFlow, "_probe", side_effect=XToolS1ConnectionError("nope")
+    ):
+        result = await flow.async_step_scan_results({CONF_HOST: "10.0.0.1"})
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+
+    with patch.object(XToolS1ConfigFlow, "_probe", side_effect=RuntimeError("boom")):
+        result = await flow.async_step_scan_results({CONF_HOST: "10.0.0.1"})
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "unknown"}
+
+
+def test_format_choice_without_firmware() -> None:
+    """A discovered device without firmware version still renders cleanly."""
+    from custom_components.xtool_s1.api import DiscoveredDevice
+    from custom_components.xtool_s1.config_flow import XToolS1ConfigFlow
+
+    label = XToolS1ConfigFlow._format_choice(
+        DiscoveredDevice(host="10.0.0.1", name="lab", firmware_version=None)
+    )
+    assert "lab" in label
+    assert "fw" not in label
+
+    label = XToolS1ConfigFlow._format_choice(DiscoveredDevice(host="10.0.0.2"))
+    assert "10.0.0.2" in label
 
 
 # --- network suggestion edge cases -----------------------------------------
@@ -543,7 +600,7 @@ async def test_suggest_network_falls_back_when_only_loopback(
         )
     schema = result["data_schema"].schema
     network_default = next((k.default() for k in schema if str(k) == "network"), None)
-    assert network_default == "192.168.1.0/24"
+    assert network_default == "255.255.255.255"
 
 
 async def test_probe_helper_returns_serial(hass: HomeAssistant) -> None:

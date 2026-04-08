@@ -20,6 +20,7 @@ from custom_components.xtool_s1.api import (
     _parse_m27_payload,
     _parse_m105_payload,
     discover_devices,
+    discover_via_udp,
     parse_network,
 )
 
@@ -361,63 +362,248 @@ def test_parse_network_bad_cidr() -> None:
 
 
 @pytest.mark.asyncio
-async def test_discover_finds_fake_server(fake_s1_server, hass) -> None:
-    from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
-    session = async_get_clientsession(hass)
-    # /32 is exactly one host
-    devices = await discover_devices(
-        session,
-        f"{fake_s1_server.host}/32",
-        port=fake_s1_server.port,
-        tcp_timeout=1.0,
-        ws_timeout=2.0,
+async def test_discover_via_udp_against_local_beacon(
+    fake_udp_discovery_server, hass
+) -> None:
+    """Run UDP discovery against the in-process loopback beacon."""
+    devices = await discover_via_udp(
+        fake_udp_discovery_server.host,
+        port=fake_udp_discovery_server.port,
+        timeout=1.0,
     )
     assert len(devices) == 1
-    assert devices[0].host == fake_s1_server.host
-    assert devices[0].serial_number == MOCK_SERIAL
-    assert devices[0].firmware_version == MOCK_FIRMWARE
+    assert devices[0].host == fake_udp_discovery_server.host
+    assert devices[0].firmware_version == "V40.32.013.2224.01"
+    assert devices[0].name == "TestLab S1"
     assert isinstance(devices[0], DiscoveredDevice)
 
 
 @pytest.mark.asyncio
-async def test_discover_skips_silent_tcp(silent_tcp_server, hass) -> None:
-    """A port that opens TCP but never speaks WS is dropped at stage 2."""
+async def test_discover_devices_wraps_udp(fake_udp_discovery_server, hass) -> None:
+    """The public discover_devices entry point delegates to UDP discovery."""
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
     session = async_get_clientsession(hass)
     devices = await discover_devices(
         session,
-        f"{silent_tcp_server.host}/32",
-        port=silent_tcp_server.port,
-        tcp_timeout=1.0,
-        ws_timeout=0.5,
+        fake_udp_discovery_server.host,
+        port=fake_udp_discovery_server.port,
+        timeout=1.0,
     )
+    assert any(d.host == fake_udp_discovery_server.host for d in devices)
+    assert all(isinstance(d, DiscoveredDevice) for d in devices)
+
+
+@pytest.mark.asyncio
+async def test_discover_via_udp_no_replies(hass) -> None:
+    """Sending the beacon to a black hole returns an empty list."""
+    devices = await discover_via_udp("127.0.0.1", port=1, timeout=0.3)
     assert devices == []
 
 
 @pytest.mark.asyncio
-async def test_discover_empty_network(hass) -> None:
-    """Scanning a single host with no listener returns an empty list."""
+async def test_discover_via_udp_with_cidr_target(
+    fake_udp_discovery_server, hass
+) -> None:
+    """A CIDR input is resolved to its broadcast address before sending."""
+    # 127.0.0.0/30 -> broadcast 127.0.0.3, which won't reach our loopback
+    # listener — but the resolution path itself is what we want to cover.
+    devices = await discover_via_udp(
+        "127.0.0.0/30",
+        port=fake_udp_discovery_server.port,
+        timeout=0.3,
+    )
+    assert isinstance(devices, list)
+
+
+# --- HTTP gateway tests ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_command_http_string(fake_s1_server, hass) -> None:
+    """send_command_http with a string M-code reaches the fake HTTP server."""
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
     session = async_get_clientsession(hass)
-    devices = await discover_devices(
+    client = XToolS1Client(
+        fake_s1_server.host,
         session,
-        "127.0.0.1/32",
-        port=1,  # nothing listens here
-        tcp_timeout=0.3,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
     )
-    assert devices == []
+    await client.send_command_http("M13 A40 B40")
+    assert "M13 A40 B40" in fake_s1_server.http_received
 
 
 @pytest.mark.asyncio
-async def test_discover_rejects_oversize_network(hass) -> None:
+async def test_send_command_http_list(fake_s1_server, hass) -> None:
+    """send_command_http with a list of M-codes posts them all in one body."""
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
     session = async_get_clientsession(hass)
-    with pytest.raises(NetworkTooLargeError):
-        await discover_devices(session, ipaddress.IPv4Network("10.0.0.0/8"))
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    await client.send_command_http(["M2003", "M13 A30 B30\n"])
+    assert "M2003" in fake_s1_server.http_received
+    assert "M13 A30 B30" in fake_s1_server.http_received
+
+
+@pytest.mark.asyncio
+async def test_send_command_http_server_error(fake_s1_server, hass) -> None:
+    """A non-200 from the HTTP server surfaces as XToolS1ConnectionError."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    fake_s1_server.http_fail = True
+    with pytest.raises(XToolS1ConnectionError):
+        await client.send_command_http("M2003")
+
+
+@pytest.mark.asyncio
+async def test_send_command_http_unreachable(hass) -> None:
+    """A connection refused on the HTTP port surfaces as XToolS1ConnectionError."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    # Port 1 is privileged and won't have an HTTP listener
+    client = XToolS1Client("127.0.0.1", session, http_port=1)
+    with pytest.raises(XToolS1ConnectionError):
+        await client.send_command_http("M2003")
+
+
+@pytest.mark.asyncio
+async def test_fetch_mac_http(fake_s1_server, hass) -> None:
+    """fetch_mac_http returns the MAC the fake server reports."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    mac = await client.fetch_mac_http()
+    assert mac == "30:30:f9:71:7a:f4"
+
+
+@pytest.mark.asyncio
+async def test_fetch_subfirmware_http(fake_s1_server, hass) -> None:
+    """fetch_subfirmware_http returns the version string."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    version = await client.fetch_subfirmware_http()
+    assert version == "V40.32.013.2224.01 B1"
+
+
+@pytest.mark.asyncio
+async def test_fetch_system_action_returns_none_on_500(fake_s1_server, hass) -> None:
+    """A 500 status from /system returns None instead of raising."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    fake_s1_server.http_fail = True
+    assert await client.fetch_mac_http() is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_system_action_unreachable(hass) -> None:
+    """Connection refused on /system raises XToolS1ConnectionError."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, http_port=1)
+    with pytest.raises(XToolS1ConnectionError):
+        await client.fetch_mac_http()
+
+
+def test_resolve_broadcast_target_passes_plain_ip() -> None:
+    """A plain IP literal passes through unchanged."""
+    from custom_components.xtool_s1.api import _resolve_broadcast_target
+
+    assert _resolve_broadcast_target("192.168.1.42") == "192.168.1.42"
+    assert _resolve_broadcast_target("255.255.255.255") == "255.255.255.255"
+
+
+def test_resolve_broadcast_target_resolves_cidr() -> None:
+    from custom_components.xtool_s1.api import _resolve_broadcast_target
+
+    assert _resolve_broadcast_target("192.168.1.0/24") == "192.168.1.255"
+
+
+def test_resolve_broadcast_target_falls_through_on_garbage() -> None:
+    """A garbage string falls through to be returned as-is."""
+    from custom_components.xtool_s1.api import _resolve_broadcast_target
+
+    assert _resolve_broadcast_target("not-a-network") == "not-a-network"
+
+
+@pytest.mark.asyncio
+async def test_discover_via_udp_with_explicit_request_id(
+    fake_udp_discovery_server, hass
+) -> None:
+    """Passing an explicit request_id covers the non-random path."""
+    devices = await discover_via_udp(
+        fake_udp_discovery_server.host,
+        port=fake_udp_discovery_server.port,
+        timeout=1.0,
+        request_id=12345,
+    )
+    assert len(devices) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_via_udp_ignores_garbage_replies(hass) -> None:
+    """Non-JSON replies and JSON arrays are silently ignored."""
+    from custom_components.xtool_s1.api import _UDPDiscoveryProtocol
+
+    protocol = _UDPDiscoveryProtocol(request_id=42)
+    # garbage non-JSON
+    protocol.datagram_received(b"not json", ("1.2.3.4", 20000))
+    # JSON array (not a dict)
+    protocol.datagram_received(b"[1,2,3]", ("1.2.3.5", 20000))
+    # Wrong requestId
+    protocol.datagram_received(
+        b'{"requestId":99,"ip":"1.2.3.6","version":"v1"}',
+        ("1.2.3.6", 20000),
+    )
+    # Right requestId — should be accepted
+    protocol.datagram_received(
+        b'{"requestId":42,"ip":"1.2.3.7","name":"","version":"v9"}',
+        ("1.2.3.7", 20000),
+    )
+    # Duplicate from same host — should be deduplicated
+    protocol.datagram_received(
+        b'{"requestId":42,"ip":"1.2.3.7","name":"","version":"v9"}',
+        ("1.2.3.7", 20000),
+    )
+    assert len(protocol.replies) == 1
+    assert protocol.replies[0].host == "1.2.3.7"
+    assert protocol.replies[0].name is None
+    assert protocol.replies[0].firmware_version == "v9"
 
 
 # --- additional edge cases for coverage -------------------------------------
@@ -651,9 +837,15 @@ def test_parse_frame_no_match_returns_empty(frame: str) -> None:
 
 
 def test_client_port_property() -> None:
-    """The port property exposes the configured WebSocket port."""
-    client = XToolS1Client("127.0.0.1", session=None, port=12345)  # type: ignore[arg-type]
+    """The port and http_port properties expose the configured ports."""
+    client = XToolS1Client(
+        "127.0.0.1",
+        session=None,  # type: ignore[arg-type]
+        port=12345,
+        http_port=23456,
+    )
     assert client.port == 12345
+    assert client.http_port == 23456
     assert client.host == "127.0.0.1"
 
 
@@ -698,31 +890,6 @@ async def test_probe_initial_state_request_status_failure(fake_s1_server, hass) 
     ):
         await client.probe_initial_state(timeout=1.0)
     assert not client.connected
-
-
-@pytest.mark.asyncio
-async def test_discover_accepts_network_object(fake_s1_server, hass) -> None:
-    """Passing an IPv4Network object (not a string) also works."""
-    from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
-    session = async_get_clientsession(hass)
-    devices = await discover_devices(
-        session,
-        ipaddress.IPv4Network(f"{fake_s1_server.host}/32"),
-        port=fake_s1_server.port,
-        tcp_timeout=1.0,
-        ws_timeout=2.0,
-    )
-    assert len(devices) == 1
-
-
-@pytest.mark.asyncio
-async def test_discover_rejects_oversize_network_object(hass) -> None:
-    from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
-    session = async_get_clientsession(hass)
-    with pytest.raises(NetworkTooLargeError):
-        await discover_devices(session, ipaddress.IPv4Network("172.16.0.0/12"))
 
 
 # --- listen-loop branch coverage --------------------------------------------
@@ -846,29 +1013,3 @@ async def test_async_context_manager(fake_s1_server, hass) -> None:
     ) as client:
         assert client.connected
     assert not client.connected
-
-
-# --- _identify_host edge case -----------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_identify_host_returns_none_when_no_serial(hass) -> None:
-    """probe_initial_state returns a state with no serial → identify returns None."""
-    from unittest.mock import patch as _patch
-
-    from custom_components.xtool_s1.api import _identify_host
-
-    with (
-        _patch(
-            "custom_components.xtool_s1.api.XToolS1Client.probe_initial_state",
-            return_value=XToolS1State(),
-        ),
-        _patch(
-            "custom_components.xtool_s1.api.XToolS1Client.disconnect",
-            return_value=None,
-        ),
-    ):
-        result = await _identify_host(
-            "127.0.0.1", 1, session=None, ws_timeout=0.1  # type: ignore[arg-type]
-        )
-    assert result is None

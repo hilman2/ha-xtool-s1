@@ -20,8 +20,14 @@ PLATFORMS: tuple[Platform, ...] = (
 async def async_setup_entry(hass: HomeAssistant, entry: XToolS1ConfigEntry) -> bool:
     """Set up xTool S1 from a config entry."""
     session = async_get_clientsession(hass)
-    # Read WS_PORT through the module so tests can monkey-patch it.
-    client = XToolS1Client(entry.data[CONF_HOST], session, port=const.WS_PORT)
+    # Read WS_PORT and HTTP_PORT through the module so tests can
+    # monkey-patch them to point at a local fake server.
+    client = XToolS1Client(
+        entry.data[CONF_HOST],
+        session,
+        port=const.WS_PORT,
+        http_port=const.HTTP_PORT,
+    )
     coordinator = XToolS1Coordinator(hass, entry, client)
 
     # test-before-setup: failure here puts the entry into "retry".
