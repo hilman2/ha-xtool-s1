@@ -117,7 +117,11 @@ class XToolS1State:
 
     # Static (cached across frames)
     serial_number: str | None = None
-    firmware_version: str | None = None
+    firmware_version: str | None = None  # M99
+    firmware_aux_1: str | None = None  # M1199
+    firmware_aux_2: str | None = None  # M2099
+    firmware_tool: str | None = None  # first non-empty entry of M1098 array
+    model_name: str | None = None  # M100, e.g. "xTool S1"
     tool_type: str | None = None
 
     # Work state
@@ -344,6 +348,23 @@ class XToolS1Client:
         """Send ``M303`` as a keepalive / position refresh."""
         await self._send("M303\n")
 
+    async def set_light_brightness(self, brightness: int) -> None:
+        """Set the internal fill-light brightness (0-100).
+
+        Confirmed working against a real S1 — ``M13 A{n} B{n}`` is
+        accepted as a write command and the device echoes it back.
+        Both A and B channels carry the same value because the app
+        always sets them in lockstep.
+        """
+        clamped = max(0, min(100, int(brightness)))
+        await self._send(f"M13 A{clamped} B{clamped}\n")
+        # Update state optimistically so the entity reflects the change
+        # without waiting for the next push.
+        self._update_state(
+            light_brightness_a=clamped,
+            light_brightness_b=clamped,
+        )
+
     async def probe_initial_state(
         self, timeout: float = CONFIG_FLOW_PROBE_TIMEOUT
     ) -> XToolS1State:
@@ -493,8 +514,13 @@ class XToolS1Client:
 
         return {}
 
-    def _parse_m2003_snapshot(self, json_str: str) -> dict[str, Any]:
-        """Parse the JSON body of an ``M2003`` reply."""
+    def _parse_m2003_snapshot(self, json_str: str) -> dict[str, Any]:  # noqa: PLR0912
+        """Parse the JSON body of an ``M2003`` reply.
+
+        Each M-code is a separate field that may or may not be present
+        in the snapshot — the dispatch is intentionally flat for
+        readability, so PLR0912 is silenced.
+        """
         data = json.loads(json_str)
         if not isinstance(data, dict):
             raise XToolS1ProtocolError("M2003 body is not a JSON object")
@@ -514,6 +540,22 @@ class XToolS1Client:
 
         if (m99 := data.get("M99")) is not None:
             out["firmware_version"] = str(m99).strip() or None
+
+        # Sub-firmwares (M1199 / M2099) and tool firmware (M1098 array).
+        # The M1098 field is a 10-slot array; we surface the first
+        # non-empty entry as the active tool firmware.
+        if (m1199 := data.get("M1199")) is not None:
+            out["firmware_aux_1"] = str(m1199).strip() or None
+        if (m2099 := data.get("M2099")) is not None:
+            out["firmware_aux_2"] = str(m2099).strip() or None
+        if isinstance((m1098 := data.get("M1098")), list):
+            for slot in m1098:
+                if isinstance(slot, str) and slot.strip():
+                    out["firmware_tool"] = slot.strip()
+                    break
+
+        if (m100 := data.get("M100")) is not None:
+            out["model_name"] = str(m100).strip() or None
 
         if (m54 := data.get("M54")) is not None:
             out["tool_type"] = str(m54).strip() or None

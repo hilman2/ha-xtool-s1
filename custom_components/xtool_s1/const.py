@@ -43,6 +43,9 @@ SCAN_WS_TIMEOUT: Final = 3.0
 #   - icons.json -> entity.sensor.<key>.default
 SENSOR_STATUS: Final = "status"
 SENSOR_FIRMWARE_VERSION: Final = "firmware_version"
+SENSOR_FIRMWARE_AUX_1: Final = "firmware_aux_1"
+SENSOR_FIRMWARE_AUX_2: Final = "firmware_aux_2"
+SENSOR_FIRMWARE_TOOL: Final = "firmware_tool"
 SENSOR_SERIAL_NUMBER: Final = "serial_number"
 SENSOR_TOOL_TYPE: Final = "tool_type"
 SENSOR_JOB_FILE: Final = "job_file"
@@ -54,6 +57,8 @@ SENSOR_LIGHT_BRIGHTNESS: Final = "light_brightness"
 BINARY_SENSOR_RUNNING: Final = "running"
 BINARY_SENSOR_ALARM: Final = "alarm"
 BINARY_SENSOR_CONNECTION: Final = "connection"
+
+LIGHT_FILL_LIGHT: Final = "fill_light"
 
 # Status enum values reported via the `status` sensor.
 # These MUST be lowercase, snake_case, and matched 1:1 in

@@ -77,6 +77,15 @@
       "firmware_version": {
         "name": "Firmware version"
       },
+      "firmware_aux_1": {
+        "name": "Auxiliary firmware 1"
+      },
+      "firmware_aux_2": {
+        "name": "Auxiliary firmware 2"
+      },
+      "firmware_tool": {
+        "name": "Tool firmware"
+      },
       "serial_number": {
         "name": "Serial number"
       },
@@ -108,6 +117,11 @@
       },
       "connection": {
         "name": "Connection"
+      }
+    },
+    "light": {
+      "fill_light": {
+        "name": "Fill light"
       }
     }
   },

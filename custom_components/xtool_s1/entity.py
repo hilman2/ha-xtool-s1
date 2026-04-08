@@ -26,13 +26,17 @@ class XToolS1Entity(CoordinatorEntity[XToolS1Coordinator]):
             coordinator.config_entry.unique_id or coordinator.config_entry.entry_id
         )
         self._attr_unique_id = f"{unique_root}_{self._attr_translation_key}"
+        data = coordinator.data
+        # Prefer the model name reported by the device (M100 in M2003)
+        # over the hard-coded fallback.
+        model = (data.model_name if data and data.model_name else None) or MODEL
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, unique_root)},
             manufacturer=MANUFACTURER,
-            model=MODEL,
+            model=model,
             name="xTool S1",
-            sw_version=coordinator.data.firmware_version if coordinator.data else None,
-            serial_number=coordinator.data.serial_number if coordinator.data else None,
+            sw_version=data.firmware_version if data else None,
+            serial_number=data.serial_number if data else None,
             configuration_url=f"http://{coordinator.config_entry.data[CONF_HOST]}",
         )
 

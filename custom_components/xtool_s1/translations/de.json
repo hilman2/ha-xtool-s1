@@ -77,6 +77,15 @@
       "firmware_version": {
         "name": "Firmware-Version"
       },
+      "firmware_aux_1": {
+        "name": "Zusatz-Firmware 1"
+      },
+      "firmware_aux_2": {
+        "name": "Zusatz-Firmware 2"
+      },
+      "firmware_tool": {
+        "name": "Werkzeug-Firmware"
+      },
       "serial_number": {
         "name": "Seriennummer"
       },
@@ -108,6 +117,11 @@
       },
       "connection": {
         "name": "Verbindung"
+      }
+    },
+    "light": {
+      "fill_light": {
+        "name": "Innenraumbeleuchtung"
       }
     }
   },

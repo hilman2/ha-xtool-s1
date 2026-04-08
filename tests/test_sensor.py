@@ -41,6 +41,9 @@ async def test_all_expected_sensors_created(
     expected = {
         "status",
         "firmware_version",
+        "firmware_aux_1",
+        "firmware_aux_2",
+        "firmware_tool",
         "serial_number",
         "tool_type",
         "job_file",
@@ -51,12 +54,26 @@ async def test_all_expected_sensors_created(
     }
     assert set(sensors.keys()) == expected
 
-    # serial_number and probe_z must be disabled by default.
-    assert sensors["serial_number"].disabled_by is er.RegistryEntryDisabler.INTEGRATION
-    assert sensors["probe_z"].disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    # serial_number, probe_z and the auxiliary firmwares are disabled by default.
+    for key in (
+        "serial_number",
+        "probe_z",
+        "firmware_aux_1",
+        "firmware_aux_2",
+        "firmware_tool",
+    ):
+        assert sensors[key].disabled_by is er.RegistryEntryDisabler.INTEGRATION
 
     # Diagnostic category for the right ones.
-    diag = {"firmware_version", "serial_number", "tool_type", "probe_z"}
+    diag = {
+        "firmware_version",
+        "firmware_aux_1",
+        "firmware_aux_2",
+        "firmware_tool",
+        "serial_number",
+        "tool_type",
+        "probe_z",
+    }
     for key, entry_obj in sensors.items():
         if key in diag:
             assert entry_obj.entity_category is EntityCategory.DIAGNOSTIC

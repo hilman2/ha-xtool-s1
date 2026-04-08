@@ -16,6 +16,15 @@
       "firmware_version": {
         "default": "mdi:chip"
       },
+      "firmware_aux_1": {
+        "default": "mdi:chip"
+      },
+      "firmware_aux_2": {
+        "default": "mdi:chip"
+      },
+      "firmware_tool": {
+        "default": "mdi:chip"
+      },
       "serial_number": {
         "default": "mdi:identifier"
       },
@@ -47,6 +56,11 @@
       },
       "connection": {
         "default": "mdi:lan-connect"
+      }
+    },
+    "light": {
+      "fill_light": {
+        "default": "mdi:lightbulb-on-outline"
       }
     }
   }

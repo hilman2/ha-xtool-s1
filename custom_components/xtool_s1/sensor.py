@@ -18,6 +18,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import XToolS1State
 from .const import (
+    SENSOR_FIRMWARE_AUX_1,
+    SENSOR_FIRMWARE_AUX_2,
+    SENSOR_FIRMWARE_TOOL,
     SENSOR_FIRMWARE_VERSION,
     SENSOR_JOB_FILE,
     SENSOR_LIGHT_BRIGHTNESS,
@@ -63,6 +66,27 @@ SENSOR_DESCRIPTIONS: tuple[XToolS1SensorDescription, ...] = (
         translation_key=SENSOR_FIRMWARE_VERSION,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda s: s.firmware_version,
+    ),
+    XToolS1SensorDescription(
+        key=SENSOR_FIRMWARE_AUX_1,
+        translation_key=SENSOR_FIRMWARE_AUX_1,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda s: s.firmware_aux_1,
+    ),
+    XToolS1SensorDescription(
+        key=SENSOR_FIRMWARE_AUX_2,
+        translation_key=SENSOR_FIRMWARE_AUX_2,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda s: s.firmware_aux_2,
+    ),
+    XToolS1SensorDescription(
+        key=SENSOR_FIRMWARE_TOOL,
+        translation_key=SENSOR_FIRMWARE_TOOL,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda s: s.firmware_tool,
     ),
     XToolS1SensorDescription(
         key=SENSOR_SERIAL_NUMBER,

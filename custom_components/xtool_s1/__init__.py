@@ -10,7 +10,11 @@ from . import const
 from .api import XToolS1Client
 from .coordinator import XToolS1ConfigEntry, XToolS1Coordinator, XToolS1RuntimeData
 
-PLATFORMS: tuple[Platform, ...] = (Platform.SENSOR, Platform.BINARY_SENSOR)
+PLATFORMS: tuple[Platform, ...] = (
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.LIGHT,
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: XToolS1ConfigEntry) -> bool:

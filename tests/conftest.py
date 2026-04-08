@@ -114,6 +114,19 @@ class FakeS1Server:
             if not ws.closed:
                 await ws.send_bytes(payload)
 
+    async def wait_for_received(self, predicate, timeout: float = 1.0) -> str | None:
+        """Poll the ``received`` list until ``predicate(line)`` returns True.
+
+        Returns the matching frame, or None if the timeout elapses.
+        """
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            for line in self.received:
+                if predicate(line):
+                    return line
+            await asyncio.sleep(0.02)
+        return None
+
     async def close_all(self) -> None:
         """Close every active client connection from the server side."""
         for ws in list(self._connections):

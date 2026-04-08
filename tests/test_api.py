@@ -564,6 +564,15 @@ async def test_double_connect_is_idempotent(fake_s1_server, hass) -> None:
         await client.disconnect()
 
 
+def test_m2003_m1098_array_with_only_empty_slots() -> None:
+    """An M1098 array with no populated slots leaves firmware_tool unset."""
+    from custom_components.xtool_s1.api import XToolS1Client
+
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    updates = client._parse_m2003_snapshot('{"M1098": ["", "", "", ""]}')
+    assert "firmware_tool" not in updates
+
+
 def test_m2003_partial_fields_only() -> None:
     """A snapshot containing only some fields must populate just those fields."""
     from custom_components.xtool_s1.api import XToolS1Client
