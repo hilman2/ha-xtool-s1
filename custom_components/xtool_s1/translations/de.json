@@ -95,11 +95,8 @@
       "probe_z": {
         "name": "Tastpunkt Z"
       },
-      "fan_a": {
-        "name": "Lüfter A"
-      },
-      "fan_b": {
-        "name": "Lüfter B"
+      "light_brightness": {
+        "name": "Innenraumbeleuchtung"
       }
     },
     "binary_sensor": {

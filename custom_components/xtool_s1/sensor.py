@@ -18,10 +18,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import XToolS1State
 from .const import (
-    SENSOR_FAN_A,
-    SENSOR_FAN_B,
     SENSOR_FIRMWARE_VERSION,
     SENSOR_JOB_FILE,
+    SENSOR_LIGHT_BRIGHTNESS,
     SENSOR_POSITION_X,
     SENSOR_POSITION_Y,
     SENSOR_PROBE_Z,
@@ -113,18 +112,12 @@ SENSOR_DESCRIPTIONS: tuple[XToolS1SensorDescription, ...] = (
         value_fn=lambda s: s.probe_z,
     ),
     XToolS1SensorDescription(
-        key=SENSOR_FAN_A,
-        translation_key=SENSOR_FAN_A,
+        key=SENSOR_LIGHT_BRIGHTNESS,
+        translation_key=SENSOR_LIGHT_BRIGHTNESS,
         native_unit_of_measurement="%",
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda s: s.fan_a,
-    ),
-    XToolS1SensorDescription(
-        key=SENSOR_FAN_B,
-        translation_key=SENSOR_FAN_B,
-        native_unit_of_measurement="%",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda s: s.fan_b,
+        # Both M13 channels carry the same value via the app — read one.
+        value_fn=lambda s: s.light_brightness_a,
     ),
 )
 

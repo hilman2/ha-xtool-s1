@@ -34,11 +34,8 @@
       "probe_z": {
         "default": "mdi:axis-z-arrow"
       },
-      "fan_a": {
-        "default": "mdi:fan"
-      },
-      "fan_b": {
-        "default": "mdi:fan"
+      "light_brightness": {
+        "default": "mdi:lightbulb-on-outline"
       }
     },
     "binary_sensor": {

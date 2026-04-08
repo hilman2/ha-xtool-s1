@@ -20,7 +20,13 @@ from day one.
 
 ## Status
 
-**v1.0** — S1 core only. AP2 air cleaner support is planned for v2.
+**v1.0** — S1 core only.
+
+Planned for v2:
+- AP2 air cleaner support (M9039 push frames)
+- Real exhaust-fan / air-assist state — not yet found in any documented
+  M-code; needs an active-job packet capture to map. Until then, the
+  audible fans on the S1 are not surfaced as sensors.
 
 ---
 
@@ -44,8 +50,7 @@ from day one.
 | sensor | Position X | mm | Current X-axis position |
 | sensor | Position Y | mm | Current Y-axis position |
 | sensor | Probe Z | mm | Last Z-probe reading *(diagnostic, off by default)* |
-| sensor | Fan A | % | Internal fan A speed |
-| sensor | Fan B | % | Internal fan B speed |
+| sensor | Light brightness | % | Internal fill-light brightness |
 | sensor | Job File | — | Currently loaded job filename |
 | sensor | Firmware Version | — | *Diagnostic* |
 | sensor | Serial Number | — | *Diagnostic, off by default* |

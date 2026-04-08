@@ -47,8 +47,7 @@ async def test_all_expected_sensors_created(
         "position_x",
         "position_y",
         "probe_z",
-        "fan_a",
-        "fan_b",
+        "light_brightness",
     }
     assert set(sensors.keys()) == expected
 
@@ -106,12 +105,13 @@ async def test_position_and_fan_values(
 
     pos_x = hass.states.get("sensor.xtool_s1_position_x")
     pos_y = hass.states.get("sensor.xtool_s1_position_y")
-    fan_a = hass.states.get("sensor.xtool_s1_fan_a")
-    fan_b = hass.states.get("sensor.xtool_s1_fan_b")
+    light = hass.states.get("sensor.xtool_s1_light_brightness")
     assert pos_x is not None and float(pos_x.state) == -12.5
     assert pos_y is not None and float(pos_y.state) == 45.2
-    assert fan_a is not None and int(fan_a.state) == 85
-    assert fan_b is not None and int(fan_b.state) == 72
+    # M13 A/B is the fill-light brightness, not fans (see api.py docstring).
+    # The sensor exposes the A channel (both channels carry the same value
+    # via the app, but the fixture differs to keep the helpers honest).
+    assert light is not None and int(light.state) == 85
 
 
 @pytest.mark.asyncio

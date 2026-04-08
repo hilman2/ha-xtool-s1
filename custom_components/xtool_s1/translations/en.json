@@ -95,11 +95,8 @@
       "probe_z": {
         "name": "Probe Z"
       },
-      "fan_a": {
-        "name": "Fan A"
-      },
-      "fan_b": {
-        "name": "Fan B"
+      "light_brightness": {
+        "name": "Light brightness"
       }
     },
     "binary_sensor": {

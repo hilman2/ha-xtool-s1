@@ -65,10 +65,13 @@ class TestParserHelpers:
         assert _parse_m105_payload("") == {}
 
     def test_parse_m13_payload(self) -> None:
-        assert _parse_m13_payload("A85 B72") == {"fan_a": 85, "fan_b": 72}
+        assert _parse_m13_payload("A85 B72") == {
+            "light_brightness_a": 85,
+            "light_brightness_b": 72,
+        }
 
     def test_parse_m13_payload_partial(self) -> None:
-        assert _parse_m13_payload("A0") == {"fan_a": 0}
+        assert _parse_m13_payload("A0") == {"light_brightness_a": 0}
 
     def test_parse_m13_payload_garbage(self) -> None:
         assert _parse_m13_payload("Axx Byy") == {}
@@ -117,8 +120,8 @@ class TestXToolS1ClientWithFakeServer:
             assert client.state.serial_number == MOCK_SERIAL
             assert client.state.firmware_version == MOCK_FIRMWARE
             assert client.state.work_state_raw == "S3"
-            assert client.state.fan_a == 0
-            assert client.state.fan_b == 0
+            assert client.state.light_brightness_a == 0
+            assert client.state.light_brightness_b == 0
             assert client.state.alarm_present is False
             assert client.state.job_file is None
         finally:
@@ -144,8 +147,8 @@ class TestXToolS1ClientWithFakeServer:
         assert state.work_state_raw == "S14"
         assert state.pos_x == -12.5
         assert state.pos_y == 45.2
-        assert state.fan_a == 85
-        assert state.fan_b == 72
+        assert state.light_brightness_a == 85
+        assert state.light_brightness_b == 72
         assert state.job_file == "my_engraving.gcode"
 
     async def test_handles_alarm_snapshot(self, fake_s1_server_alarm, hass) -> None:
@@ -440,14 +443,17 @@ class TestParserEdgeCases:
 
     def test_m13_empty_part(self) -> None:
         # Multiple spaces produce empty parts; they must be skipped.
-        assert _parse_m13_payload("  A1   B2  ") == {"fan_a": 1, "fan_b": 2}
+        assert _parse_m13_payload("  A1   B2  ") == {
+            "light_brightness_a": 1,
+            "light_brightness_b": 2,
+        }
 
     def test_m13_garbage_int(self) -> None:
         assert _parse_m13_payload("Aabc Bxyz") == {}
 
     def test_m13_unknown_prefix(self) -> None:
         # 'C' isn't A or B — just skipped silently.
-        assert _parse_m13_payload("C99 A1") == {"fan_a": 1}
+        assert _parse_m13_payload("C99 A1") == {"light_brightness_a": 1}
 
 
 @pytest.mark.asyncio

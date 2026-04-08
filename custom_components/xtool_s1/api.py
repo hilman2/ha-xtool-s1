@@ -11,6 +11,15 @@ G-code/M-code dialect. The relevant messages are:
 * ``M313``   → push: last Z-probe reading
 * ``M9039``  → AP2 air-cleaner status (deferred to v2)
 
+Note about ``M13``: previous reverse-engineering work labeled M13's
+``A``/``B`` fields as exhaust fan speeds (RepRap-style). Empirical
+testing on a real S1 (smoke test 2026-04-08) showed those fields are
+actually the **internal fill-light brightness** — moving the brightness
+slider in xTool Creative Space changes both A and B in lockstep, while
+the audible exhaust fans are not represented at all. Real fan-state
+discovery is a v2 task; we expose only a single "Light Brightness"
+reading from this field for now.
+
 The wire format is mostly ASCII, but some frames (notably ``M9039``) arrive
 as binary frames with a binary header/footer wrapping the M-code payload.
 
@@ -124,9 +133,11 @@ class XToolS1State:
     pos_u: float | None = None
     probe_z: float | None = None
 
-    # Internal fans (percent)
-    fan_a: int | None = None
-    fan_b: int | None = None
+    # Internal fill-light brightness (percent). Two channels (A and B)
+    # but they always carry the same value via the app — see api module
+    # docstring. The sensor layer only exposes one of them.
+    light_brightness_a: int | None = None
+    light_brightness_b: int | None = None
 
     # Temperatures (°C) — currently only exposed via diagnostics
     temp_x: float | None = None
@@ -183,16 +194,24 @@ def _parse_m105_payload(value: str) -> dict[str, float]:
 
 
 def _parse_m13_payload(value: str) -> dict[str, int]:
-    """Parse an ``M13`` fan payload like ``A70 B70``."""
+    """Parse an ``M13`` light-brightness payload like ``A70 B70``.
+
+    Despite the RepRap convention of M13 being a fan command, on the
+    xTool S1 this field carries the **internal fill-light brightness**
+    (0-100). Both ``A`` and ``B`` always carry the same value when set
+    via xTool Creative Space — likely two physical LED banks wired to
+    one logical setting. We capture both for diagnostics but only one
+    sensor is exposed.
+    """
     out: dict[str, int] = {}
     # ``str.split()`` with no arguments collapses whitespace, so empty
     # parts never appear here.
     for part in value.split():
         try:
             if part.startswith("A"):
-                out["fan_a"] = int(part[1:])
+                out["light_brightness_a"] = int(part[1:])
             elif part.startswith("B"):
-                out["fan_b"] = int(part[1:])
+                out["light_brightness_b"] = int(part[1:])
         except ValueError:
             continue
     return out
