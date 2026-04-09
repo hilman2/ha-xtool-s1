@@ -4,7 +4,7 @@ rules:
   appropriate-polling:
     status: done
     comment: |
-      Polling is a 30 s watchdog only — fresh state arrives via the
+      Polling is a 30 s watchdog only;fresh state arrives via the
       WebSocket push path. The poll just reconnects on dead sockets.
   brands:
     status: exempt

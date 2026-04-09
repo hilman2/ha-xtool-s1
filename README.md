@@ -1,4 +1,4 @@
-# xTool S1 — Home Assistant Integration
+# xTool S1 - Home Assistant Integration
 
 [![CI](https://github.com/hilman2/ha-xtool-s1/actions/workflows/ci.yml/badge.svg)](https://github.com/hilman2/ha-xtool-s1/actions/workflows/ci.yml)
 [![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/)
@@ -8,9 +8,9 @@
 
 A [Home Assistant](https://www.home-assistant.io/) custom integration for the
 **xTool S1** laser engraver. Control your laser, monitor jobs in real time,
-and manage saved jobs — all from your phone, no XCS desktop app required.
+and manage saved jobs, all from your phone without the XCS desktop app.
 
-> **Disclaimer** — This is an independent community project and is **not
+> **Disclaimer**: This is an independent community project and is **not
 > affiliated with xTool**. Operating a laser cutter is inherently dangerous.
 > Use at your own risk.
 
@@ -18,13 +18,13 @@ and manage saved jobs — all from your phone, no XCS desktop app required.
 
 ## Highlights
 
-- **Real-time monitoring** via WebSocket push — status, position, alarm
-- **Job control** — Stop, Pause and Resume buttons that work from HA
-- **Job management** — save jobs from the laser, re-start them later with a
+- **Real-time monitoring** via WebSocket push (status, position, alarm)
+- **Job control**: Stop, Pause and Resume buttons that work from HA
+- **Job management**: save jobs from the laser, re-start them later with a
   confirmation dialog showing material, thickness and laser module
-- **Fill light control** — dimmable light entity with standby detection
-- **XCS coexistence** — works alongside the xTool Creative Space desktop app
-- **Graceful offline** — a powered-off laser is normal, not an error
+- **Fill light control**: dimmable light entity with standby detection
+- **XCS coexistence**: works alongside the xTool Creative Space desktop app
+- **Graceful offline**: a powered-off laser is normal, not an error
 
 ---
 
@@ -32,10 +32,10 @@ and manage saved jobs — all from your phone, no XCS desktop app required.
 
 ### HACS (recommended)
 
-1. Open **HACS** → ⋮ → **Custom repositories**
-2. Add `https://github.com/hilman2/ha-xtool-s1` — type **Integration**
-3. Install → restart Home Assistant
-4. **Settings → Devices & Services → Add Integration → xTool S1**
+1. Open **HACS** > **Custom repositories**
+2. Add `https://github.com/hilman2/ha-xtool-s1`, type **Integration**
+3. Install, then restart Home Assistant
+4. **Settings > Devices & Services > Add Integration > xTool S1**
 5. Run a **network scan** or enter the laser's IP manually
 
 ### Manual
@@ -47,17 +47,17 @@ and restart Home Assistant.
 
 The config flow offers two ways to find the laser:
 
-- **Network scan** — enter a CIDR range (e.g. `192.168.1.0/24`) and the
+- **Network scan**: enter a CIDR range (e.g. `192.168.1.0/24`) and the
   integration sends a UDP discovery broadcast on port 20000. Every S1 on
   the network replies with its IP and name.
-- **Manual IP** — enter the laser's IP address or hostname directly.
+- **Manual IP**: enter the laser's IP address or hostname directly.
 
 The integration connects via WebSocket (port 8081) and verifies the device
 by reading its serial number. No credentials are required.
 
 ### Removal
 
-**Settings → Devices & Services → xTool S1 → ⋮ → Delete**
+**Settings > Devices & Services > xTool S1 > Delete**
 
 This removes the integration, all entities, and the device. Saved jobs
 (from the job management card) are retained in HA storage and can be
@@ -73,7 +73,7 @@ All entities are created automatically per device.
 
 | Name | Description |
 |---|---|
-| Status | Machine state: idle, ready, measuring, running, paused, … |
+| Status | Machine state: idle, ready, measuring, running, paused, ... |
 | Last job outcome | idle / running / paused / completed / aborted |
 | Installed tool | Detected laser head (e.g. *Diode 40 W*) |
 | Working time | Total working hours (lifetime) |
@@ -111,7 +111,7 @@ All entities are created automatically per device.
 
 | Type | Name | Description |
 |---|---|---|
-| Light | Fill light | Dimmable interior light — detects standby auto-off |
+| Light | Fill light | Dimmable interior light, detects standby auto-off |
 | Button | Stop | Abort the running job |
 | Button | Pause | Pause the running job |
 | Button | Resume | Resume a paused job |
@@ -120,8 +120,8 @@ All entities are created automatically per device.
 
 ## Job management
 
-Save the current job from the laser, then re-run it later — directly from
-your phone, no XCS needed.
+Save the current job from the laser, then re-run it later directly from
+your phone without XCS.
 
 ### Lovelace card
 
@@ -133,13 +133,13 @@ type: custom:xtool-s1-jobs-card
 ```
 
 The card provides:
-- **Save** — downloads the current gcode from the laser and stores it with
+- **Save**: downloads the current gcode from the laser and stores it with
   title, description, material and thickness
-- **Job list** — shows all saved jobs with their metadata
-- **Start** — confirmation dialog showing material, thickness and laser
+- **Job list**: shows all saved jobs with their metadata
+- **Start**: confirmation dialog showing material, thickness and laser
   module, then uploads the job and triggers the start sequence.
   The user must press the physical Start button on the device.
-- **Delete** — remove saved jobs
+- **Delete**: remove saved jobs
 
 ### Services
 
@@ -185,20 +185,20 @@ runs without interruption.
 
 ## Known limitations
 
-- **Job start requires physical button** — after uploading and triggering
+- **Job start requires physical button**: after uploading and triggering
   a job via HA, the user must press the Start button on the device. This
   is a firmware safety feature.
-- **XCS over WiFi causes WebSocket kicks** — the XCS desktop app polls
+- **XCS over WiFi causes WebSocket kicks**: the XCS desktop app polls
   aggressively and the S1 firmware kicks competing clients. The
   integration detects this and switches to coexist mode automatically.
   Use XCS over USB to avoid this entirely.
-- **No HACS store icon** — HACS does not yet support local brand assets
+- **No HACS store icon**: HACS does not yet support local brand assets
   for custom integrations. The icon shows correctly in HA's own
   integration and device pages.
-- **SD card unavailable during jobs** — the logfile and gcode download
+- **SD card unavailable during jobs**: the logfile and gcode download
   endpoints return errors while a job is running. The integration caches
   the last known values.
-- **Single device per entry** — each config entry represents one laser.
+- **Single device per entry**: each config entry represents one laser.
   Add multiple entries for multiple devices.
 
 ---
@@ -207,10 +207,10 @@ runs without interruption.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| All sensors show 0 / off | Laser is powered off | Normal — turn on the laser |
+| All sensors show 0 / off | Laser is powered off | Normal, turn on the laser |
 | Sensors flicker or go stale | XCS app is open over WiFi | Close XCS or connect it via USB |
 | "Connection" sensor stays off | Wrong IP or laser not on network | Reconfigure with correct IP |
-| Job card shows no jobs | No jobs saved yet | Use "Job speichern" after running a job in XCS |
+| Job card shows no jobs | No jobs saved yet | Save a job after running one in XCS |
 | Start button does nothing | Laser not connected via WebSocket | Check connection sensor; restart integration if needed |
 
 ---
@@ -268,7 +268,7 @@ action:
 ```
 
 CI runs on every push: black, ruff, hassfest, HACS validation, pytest.
-`main` is branch-protected. Tagged releases re-run CI before publishing.
+Tagged releases re-run CI before publishing.
 
 ---
 
