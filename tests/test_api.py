@@ -508,6 +508,122 @@ async def test_stop_pause_resume_request_stats_use_http(fake_s1_server, hass) ->
 
 
 @pytest.mark.asyncio
+async def test_upload_job(fake_s1_server, hass) -> None:
+    """upload_job POSTs gcode to /upload with taskId."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    await client.upload_job("G0X10\nG1X20\n", "test-uuid-123")
+    # The fake server doesn't have /upload, but the HTTP port accepted it.
+
+
+@pytest.mark.asyncio
+async def test_upload_job_failure(hass) -> None:
+    """upload_job wraps HTTP errors as XToolS1ConnectionError."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, http_port=1)
+    with pytest.raises(XToolS1ConnectionError):
+        await client.upload_job("G0X10\n", "uuid")
+
+
+@pytest.mark.asyncio
+async def test_upload_job_server_error(fake_s1_server, hass) -> None:
+    """upload_job raises when the server returns an error status."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    fake_s1_server.http_fail = True
+    with pytest.raises(XToolS1ConnectionError):
+        await client.upload_job("G0X10\n", "uuid")
+
+
+@pytest.mark.asyncio
+async def test_download_job(fake_s1_server, hass) -> None:
+    """download_job fetches /gcode/tmp.gcode."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    gcode = await client.download_job()
+    assert "G0X10" in gcode
+
+
+@pytest.mark.asyncio
+async def test_download_job_server_error(fake_s1_server, hass) -> None:
+    """download_job raises on HTTP error."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    fake_s1_server.http_fail = True
+    with pytest.raises(XToolS1ConnectionError):
+        await client.download_job()
+
+
+@pytest.mark.asyncio
+async def test_download_job_unreachable(hass) -> None:
+    """download_job wraps connection errors."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, http_port=1)
+    with pytest.raises(XToolS1ConnectionError):
+        await client.download_job()
+
+
+@pytest.mark.asyncio
+async def test_start_job_sequence(fake_s1_server, hass) -> None:
+    """start_job_sequence sends M322/M330/M323 over WebSocket."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await client.start_job_sequence()
+        await asyncio.sleep(0.2)
+    finally:
+        await client.disconnect()
+    assert any("M322" in f for f in fake_s1_server.received)
+    assert any("M323" in f for f in fake_s1_server.received)
+
+
+@pytest.mark.asyncio
+async def test_start_job_sequence_disconnected(hass) -> None:
+    """start_job_sequence raises when WS is not connected."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, port=1)
+    with pytest.raises(XToolS1ConnectionError):
+        await client.start_job_sequence()
+
+
+@pytest.mark.asyncio
 async def test_push_unknown_frame_is_ignored(fake_s1_server, hass) -> None:
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 

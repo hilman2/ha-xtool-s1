@@ -9,6 +9,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from . import const
 from .api import XToolS1Client
 from .coordinator import XToolS1ConfigEntry, XToolS1Coordinator, XToolS1RuntimeData
+from .services import async_register_services
 
 PLATFORMS: tuple[Platform, ...] = (
     Platform.SENSOR,
@@ -37,6 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: XToolS1ConfigEntry) -> b
     entry.runtime_data = XToolS1RuntimeData(coordinator=coordinator, client=client)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async_register_services(hass)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 

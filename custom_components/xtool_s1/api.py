@@ -541,6 +541,65 @@ class XToolS1Client:
         """
         await self.send_command_http(MCODE_RESUME)
 
+    async def upload_job(self, gcode: str, task_id: str) -> None:
+        """Upload a gcode file to the laser's SD card.
+
+        Uses ``POST /upload?taskId=<uuid>&filename=tmp.gcode`` — the
+        same endpoint the XCS app uses. The file is staged as
+        ``tmp.gcode`` on the SD card but does NOT start automatically.
+        """
+        body = gcode if gcode.endswith("\n") else gcode + "\n"
+        try:
+            async with self._session.post(
+                f"{self._http_base}/upload",
+                params={"taskId": task_id, "filename": "tmp.gcode"},
+                data=body.encode("utf-8"),
+                timeout=aiohttp.ClientTimeout(total=30.0),
+                headers={"Content-Type": "text/plain"},
+            ) as resp:
+                if resp.status != 200:
+                    raise XToolS1ConnectionError(
+                        f"HTTP /upload returned status {resp.status}"
+                    )
+                await resp.read()
+        except (TimeoutError, ClientError, OSError) as err:
+            raise XToolS1ConnectionError(str(err)) from err
+
+    async def download_job(self) -> str:
+        """Download the current ``tmp.gcode`` from the laser's SD card."""
+        try:
+            async with self._session.get(
+                f"{self._http_base}/gcode/tmp.gcode",
+                timeout=aiohttp.ClientTimeout(total=30.0),
+            ) as resp:
+                if resp.status != 200:
+                    raise XToolS1ConnectionError(
+                        f"HTTP /gcode/tmp.gcode returned status {resp.status}"
+                    )
+                return await resp.text()
+        except (TimeoutError, ClientError, OSError) as err:
+            raise XToolS1ConnectionError(str(err)) from err
+
+    async def start_job_sequence(self) -> None:
+        """Run the WebSocket start sequence (M322, M330, M323 x2).
+
+        After this method returns, the laser is armed and waiting for
+        the user to press the physical Start button. The method must
+        be called while the WebSocket is connected — it raises
+        ``XToolS1ConnectionError`` otherwise.
+
+        Verified against hilman2's S1 on 2026-04-09. These commands
+        MUST go through the WebSocket — HTTP ``POST /cmd`` is silently
+        ignored for the start sequence.
+        """
+        await self._send("M322 S1\n")
+        await asyncio.sleep(0.3)
+        await self._send("M330 S0\n")
+        await asyncio.sleep(0.3)
+        await self._send("M323 S1\n")
+        await asyncio.sleep(0.5)
+        await self._send("M323 S1\n")
+
     async def request_stats(self) -> None:
         """Request a fresh M2008 lifetime-counter push.
 

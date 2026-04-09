@@ -1,0 +1,88 @@
+save_job:
+  name: Save current job
+  description: >-
+    Download the current gcode from the laser and save it with
+    metadata (title, description, material, thickness).
+  fields:
+    title:
+      name: Title
+      description: Short name for the saved job.
+      required: true
+      example: "Phone stand cutout"
+      selector:
+        text:
+    description:
+      name: Description
+      description: Longer description of the job.
+      required: true
+      example: "3 mm birch plywood, vector cut at 80% / 10 mm/s"
+      selector:
+        text:
+          multiline: true
+    material:
+      name: Material
+      description: Material type (must be confirmed when re-starting).
+      required: true
+      example: "Birch plywood"
+      selector:
+        text:
+    thickness_mm:
+      name: Thickness (mm)
+      description: Material thickness in millimeters.
+      required: true
+      example: 3.0
+      selector:
+        number:
+          min: 0.1
+          max: 100
+          step: 0.1
+          unit_of_measurement: mm
+          mode: box
+
+start_job:
+  name: Start a saved job
+  description: >-
+    Upload a previously saved job to the laser and trigger the start
+    sequence. The user must confirm material, thickness and accept
+    responsibility. Material and thickness must match the stored
+    values. The laser module is checked automatically. After the
+    sequence completes, press the physical Start button on the device.
+    USE AT YOUR OWN RISK — always verify material, thickness and
+    laser settings before pressing the Start button.
+  fields:
+    title:
+      name: Job title
+      description: Title of the saved job to start.
+      required: true
+      selector:
+        text:
+    confirm_material:
+      name: Confirm material
+      description: Must match the material stored with the job.
+      required: true
+      selector:
+        text:
+    confirm_thickness_mm:
+      name: Confirm thickness (mm)
+      description: Must match the thickness stored with the job.
+      required: true
+      selector:
+        number:
+          min: 0.1
+          max: 100
+          step: 0.1
+          unit_of_measurement: mm
+          mode: box
+    confirm_risk:
+      name: Accept risk
+      description: >-
+        You must set this to true to confirm that you have verified
+        the material, thickness and laser settings, and accept full
+        responsibility for the operation.
+      required: true
+      selector:
+        boolean:
+
+list_jobs:
+  name: List saved jobs
+  description: Return a list of all saved jobs with their metadata.

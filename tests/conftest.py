@@ -125,6 +125,10 @@ class FakeS1Server:
         http_app.router.add_route("POST", "/cmd", self._handle_http_cmd)
         http_app.router.add_route("GET", "/cmd", self._handle_http_cmd_get)
         http_app.router.add_route("GET", "/system", self._handle_http_system)
+        http_app.router.add_route("POST", "/upload", self._handle_upload)
+        http_app.router.add_route(
+            "GET", "/gcode/tmp.gcode", self._handle_gcode_download
+        )
         self._http_runner = web.AppRunner(http_app)
         await self._http_runner.setup()
         self._http_site = web.TCPSite(self._http_runner, self.host, 0)
@@ -177,6 +181,17 @@ class FakeS1Server:
         if action == "get_dev_name":
             return web.Response(text="")
         return web.Response(status=404, text="This URI does not exist")
+
+    async def _handle_upload(self, request: web.Request) -> web.Response:
+        if self.http_fail:
+            return web.Response(status=500, text="boom")
+        await request.read()
+        return web.Response(text='{"result":"ok"}\n')
+
+    async def _handle_gcode_download(self, request: web.Request) -> web.Response:
+        if self.http_fail:
+            return web.Response(status=500, text="boom")
+        return web.Response(text="G0X10\nG1X20\n")
 
     async def push(self, frame: str) -> None:
         """Send a raw text frame to all connected clients."""
