@@ -32,6 +32,8 @@ class SavedJob:
     serial_number: str | None = None
     laser_module: str | None = None  # e.g. "Diode 40 W"
     power_percent: float | None = None  # extracted from gcode
+    speed_mm_per_s: float | None = None  # max feed from gcode
+    laser_mode: str | None = None  # "cut" or "frame"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -48,6 +50,8 @@ class SavedJob:
             serial_number=data.get("serial_number"),
             laser_module=data.get("laser_module"),
             power_percent=data.get("power_percent"),
+            speed_mm_per_s=data.get("speed_mm_per_s"),
+            laser_mode=data.get("laser_mode"),
         )
 
 
@@ -84,10 +88,22 @@ class XToolS1JobStore:
                 "thickness_mm": j.thickness_mm,
                 "laser_module": j.laser_module,
                 "power_percent": j.power_percent,
+                "speed_mm_per_s": j.speed_mm_per_s,
+                "laser_mode": j.laser_mode,
                 "saved_at": j.saved_at,
             }
             for j in jobs.values()
         ]
+
+    async def async_delete_job(self, title: str) -> bool:
+        """Delete a saved job by title. Returns True if found."""
+        await self.async_load()
+        assert self._data is not None
+        if title not in self._data:
+            return False
+        del self._data[title]
+        await self._store.async_save(self._data)
+        return True
 
     @staticmethod
     def now_iso() -> str:

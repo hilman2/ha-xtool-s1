@@ -2,7 +2,7 @@ save_job:
   name: Save current job
   description: >-
     Download the current gcode from the laser and save it with
-    metadata (title, description, material, thickness).
+    metadata. Power, speed and laser module are extracted automatically.
   fields:
     title:
       name: Title
@@ -21,7 +21,7 @@ save_job:
           multiline: true
     material:
       name: Material
-      description: Material type (must be confirmed when re-starting).
+      description: Material type.
       required: true
       example: "Birch plywood"
       selector:
@@ -42,13 +42,9 @@ save_job:
 start_job:
   name: Start a saved job
   description: >-
-    Upload a previously saved job to the laser and trigger the start
-    sequence. The user must confirm material, thickness and accept
-    responsibility. Material and thickness must match the stored
-    values. The laser module is checked automatically. After the
-    sequence completes, press the physical Start button on the device.
-    USE AT YOUR OWN RISK — always verify material, thickness and
-    laser settings before pressing the Start button.
+    Upload a saved job and trigger the start sequence. The laser module
+    is checked automatically. After the sequence the user must press
+    the physical Start button on the device. USE AT YOUR OWN RISK.
   fields:
     title:
       name: Job title
@@ -56,33 +52,26 @@ start_job:
       required: true
       selector:
         text:
-    confirm_material:
-      name: Confirm material
-      description: Must match the material stored with the job.
-      required: true
-      selector:
-        text:
-    confirm_thickness_mm:
-      name: Confirm thickness (mm)
-      description: Must match the thickness stored with the job.
-      required: true
-      selector:
-        number:
-          min: 0.1
-          max: 100
-          step: 0.1
-          unit_of_measurement: mm
-          mode: box
-    confirm_risk:
-      name: Accept risk
+    confirm:
+      name: Confirm
       description: >-
-        You must set this to true to confirm that you have verified
-        the material, thickness and laser settings, and accept full
-        responsibility for the operation.
+        Set to true to confirm you have reviewed the job properties
+        and accept responsibility for the operation.
       required: true
       selector:
         boolean:
 
+delete_job:
+  name: Delete a saved job
+  description: Remove a saved job from the store.
+  fields:
+    title:
+      name: Job title
+      description: Title of the job to delete.
+      required: true
+      selector:
+        text:
+
 list_jobs:
   name: List saved jobs
-  description: Return a list of all saved jobs with their metadata.
+  description: Return all saved jobs with their metadata.

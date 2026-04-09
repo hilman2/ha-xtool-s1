@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -10,6 +12,8 @@ from . import const
 from .api import XToolS1Client
 from .coordinator import XToolS1ConfigEntry, XToolS1Coordinator, XToolS1RuntimeData
 from .services import async_register_services
+
+CARD_URL = "/xtool_s1/xtool-s1-jobs-card.js"
 
 PLATFORMS: tuple[Platform, ...] = (
     Platform.SENSOR,
@@ -39,8 +43,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: XToolS1ConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_register_services(hass)
+    _register_card(hass)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+def _register_card(hass: HomeAssistant) -> None:  # pragma: no cover
+    """Serve the Lovelace card JS from /xtool_s1/."""
+    if hass.http is None:
+        return
+    hass.http.register_static_path(
+        "/xtool_s1",
+        str(Path(__file__).parent / "www"),
+        cache_headers=False,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: XToolS1ConfigEntry) -> bool:
