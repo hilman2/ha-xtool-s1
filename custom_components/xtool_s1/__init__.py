@@ -50,12 +50,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: XToolS1ConfigEntry) -> b
 
 
 async def _register_card(hass: HomeAssistant) -> None:  # pragma: no cover
-    """Serve the Lovelace card JS from /xtool_s1/."""
+    """Serve the Lovelace card JS and auto-register it as a resource."""
     if hass.http is None:
         return
     await hass.http.async_register_static_paths(
         [StaticPathConfig("/xtool_s1", str(Path(__file__).parent / "www"), False)]
     )
+    # Auto-load the card JS so the user doesn't have to add it manually.
+    from homeassistant.components.frontend import add_extra_js_url
+
+    add_extra_js_url(hass, CARD_URL)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: XToolS1ConfigEntry) -> bool:

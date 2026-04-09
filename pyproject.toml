@@ -1,6 +1,6 @@
 [project]
 name = "ha-xtool-s1"
-version = "1.4.1"
+version = "1.4.2"
 description = "Home Assistant custom integration for the xTool S1 laser engraver"
 readme = "README.md"
 license = { text = "MIT" }

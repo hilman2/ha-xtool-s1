@@ -1,7 +1,7 @@
 {
   "domain": "xtool_s1",
   "name": "xTool S1 Laser",
-  "after_dependencies": ["http", "network"],
+  "after_dependencies": ["frontend", "http", "network"],
   "codeowners": ["@hilman2"],
   "config_flow": true,
   "documentation": "https://github.com/hilman2/ha-xtool-s1",
@@ -11,5 +11,5 @@
   "loggers": ["custom_components.xtool_s1"],
   "quality_scale": "gold",
   "requirements": [],
-  "version": "1.4.1"
+  "version": "1.4.2"
 }
