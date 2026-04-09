@@ -211,6 +211,10 @@ class XToolS1State:
     standby_seconds: int | None = None
     tool_runtime_seconds: int | None = None
 
+    # Per-tool working times parsed from logs.txt (e.g. {"40w": 3086, "2w": 880}).
+    # Updated by the coordinator's logfile poll, not from WS/M-code frames.
+    logfile_tool_times: dict[str, int] = field(default_factory=dict)
+
     # Connection liveness — derived, not from the wire
     connected: bool = False
 
@@ -668,6 +672,53 @@ class XToolS1Client:
         kicked by the app.
         """
         return await self._fetch_system_action("version")
+
+    async def fetch_logfile_tail(self, tail_bytes: int = 5000) -> str | None:
+        """Download the last ``tail_bytes`` of ``/gcode/logs.txt``.
+
+        Uses an HTTP Range header so we don't pull the entire multi-MB
+        file. Returns None if the file is unavailable (job running,
+        device off).
+        """
+        try:
+            async with self._session.get(
+                f"{self._http_base}/gcode/logs.txt",
+                headers={"Range": f"bytes=-{tail_bytes}"},
+                timeout=aiohttp.ClientTimeout(total=10.0),
+            ) as resp:
+                if resp.status not in (200, 206):
+                    return None
+                return await resp.text(encoding="utf-8", errors="replace")
+        except (TimeoutError, ClientError, OSError):
+            return None
+
+    async def fetch_logfile_size(self) -> int | None:
+        """Return the size of ``/gcode/logs.txt`` in bytes, or None."""
+        try:
+            async with self._session.head(
+                f"{self._http_base}/gcode/logs.txt",
+                timeout=aiohttp.ClientTimeout(total=_SEND_TIMEOUT),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                length = resp.headers.get("Content-Length")
+                return int(length) if length else None
+        except (TimeoutError, ClientError, OSError, ValueError):
+            return None
+
+    async def truncate_logfile(self) -> None:
+        """Overwrite ``logs.txt`` with an empty body to free SD space."""
+        try:
+            async with self._session.post(
+                f"{self._http_base}/upload",
+                params={"filename": "logs.txt"},
+                data=b"",
+                timeout=aiohttp.ClientTimeout(total=_SEND_TIMEOUT),
+                headers={"Content-Type": "text/plain"},
+            ) as resp:
+                await resp.read()
+        except (TimeoutError, ClientError, OSError):
+            pass  # best-effort cleanup
 
     async def _fetch_system_action(self, action: str) -> str | None:
         try:

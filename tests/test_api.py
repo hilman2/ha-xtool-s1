@@ -624,6 +624,118 @@ async def test_start_job_sequence_disconnected(hass) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fetch_logfile_tail(fake_s1_server, hass) -> None:
+    """fetch_logfile_tail retrieves the tail of logs.txt."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    fake_s1_server.logfile_content = "line1\nline2\nacc_worktime:100;\n"
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    tail = await client.fetch_logfile_tail()
+    assert tail is not None
+    assert "acc_worktime" in tail
+
+
+@pytest.mark.asyncio
+async def test_fetch_logfile_tail_failure(hass) -> None:
+    """fetch_logfile_tail returns None when device is unreachable."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, http_port=1)
+    assert await client.fetch_logfile_tail() is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_logfile_tail_server_error(fake_s1_server, hass) -> None:
+    """fetch_logfile_tail returns None on HTTP error."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    fake_s1_server.http_fail = True
+    assert await client.fetch_logfile_tail() is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_logfile_size(fake_s1_server, hass) -> None:
+    """fetch_logfile_size returns the Content-Length from HEAD."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    fake_s1_server.logfile_content = "x" * 500
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    size = await client.fetch_logfile_size()
+    assert size == 500
+
+
+@pytest.mark.asyncio
+async def test_fetch_logfile_size_failure(hass) -> None:
+    """fetch_logfile_size returns None when unreachable."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, http_port=1)
+    assert await client.fetch_logfile_size() is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_logfile_size_server_error(fake_s1_server, hass) -> None:
+    """fetch_logfile_size returns None on HTTP error."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    fake_s1_server.http_fail = True
+    assert await client.fetch_logfile_size() is None
+
+
+@pytest.mark.asyncio
+async def test_truncate_logfile(fake_s1_server, hass) -> None:
+    """truncate_logfile uploads an empty body to /upload?filename=logs.txt."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    await client.truncate_logfile()  # should not raise
+
+
+@pytest.mark.asyncio
+async def test_truncate_logfile_failure(hass) -> None:
+    """truncate_logfile silently swallows errors (best-effort)."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client("127.0.0.1", session, http_port=1)
+    await client.truncate_logfile()  # should not raise
+
+
+@pytest.mark.asyncio
 async def test_push_unknown_frame_is_ignored(fake_s1_server, hass) -> None:
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 

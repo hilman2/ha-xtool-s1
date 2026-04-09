@@ -41,6 +41,14 @@ COEXIST_RECOVERY_AFTER: Final = 60.0
 # tick once per second on the device side and we don't want to spam.
 STATS_POLL_INTERVAL: Final = 300.0
 
+# How often to poll the logs.txt file for per-tool counters (seconds).
+LOGFILE_POLL_INTERVAL: Final = 600.0
+
+# Truncate logs.txt when it exceeds this size (bytes). The firmware
+# stops writing when the file gets too large, so we clear it to keep
+# the counters fresh. 1 MB is plenty for the last few boot cycles.
+LOGFILE_MAX_SIZE: Final = 1_000_000
+
 # Time to wait for the first M2003 reply during config-flow validation.
 CONFIG_FLOW_PROBE_TIMEOUT: Final = 8.0
 

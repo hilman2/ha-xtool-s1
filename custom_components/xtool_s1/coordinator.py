@@ -41,7 +41,9 @@ from collections import deque
 from dataclasses import dataclass, replace
 from datetime import timedelta
 import logging
+import re
 import time
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -53,6 +55,8 @@ from .const import (
     COEXIST_KICK_WINDOW,
     COEXIST_RECOVERY_AFTER,
     DOMAIN,
+    LOGFILE_MAX_SIZE,
+    LOGFILE_POLL_INTERVAL,
     RECONNECT_BACKOFF_SECONDS,
     STATS_POLL_INTERVAL,
     UPDATE_INTERVAL_SECONDS,
@@ -62,6 +66,39 @@ _LOGGER = logging.getLogger(__name__)
 
 # A WebSocket session shorter than this is treated as "kicked by the app".
 _KICK_DETECTION_SECONDS = 10.0
+
+# Regex to pull per-tool counters from the firmware's logs.txt.
+_LOGFILE_COUNTER_RE = re.compile(r"acc_(\w+)_laserworktime:(\d+);", re.IGNORECASE)
+_LOGFILE_WORKTIME_RE = re.compile(r"acc_worktime:(\d+);")
+_LOGFILE_WORKCOUNT_RE = re.compile(r"acc_workcount:(\d+);")
+_LOGFILE_SYSRUNTIME_RE = re.compile(r"acc_sys_runtime:(\d+);")
+
+
+def _parse_logfile_counters(tail: str) -> dict[str, Any]:
+    """Extract the LAST occurrence of the counter block from a logs.txt tail.
+
+    Returns a dict of state fields to update. Empty if no counters found.
+    """
+    out: dict[str, Any] = {}
+
+    # Per-tool working times (e.g. acc_40w_laserworktime:3086;)
+    tool_times: dict[str, int] = {}
+    for match in _LOGFILE_COUNTER_RE.finditer(tail):
+        wattage = match.group(1).lower()
+        tool_times[wattage] = int(match.group(2))
+    if tool_times:
+        out["logfile_tool_times"] = tool_times
+
+    # Global counters (take the LAST match)
+    for match in _LOGFILE_WORKTIME_RE.finditer(tail):
+        out["working_seconds"] = int(match.group(1))
+    for match in _LOGFILE_WORKCOUNT_RE.finditer(tail):
+        out["session_count"] = int(match.group(1))
+    for match in _LOGFILE_SYSRUNTIME_RE.finditer(tail):
+        out["standby_seconds"] = int(match.group(1))
+
+    return out
+
 
 # How long the HTTP heartbeat may fail before we declare the device offline.
 _OFFLINE_AFTER_HTTP_FAILS = 60.0
@@ -112,6 +149,7 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
         self._http_ok_at: float | None = None
         self._http_failing_since: float | None = None
         self._last_stats_poll: float = 0.0
+        self._last_logfile_poll: float = 0.0
 
     # -- public properties used by entities -----------------------------
 
@@ -204,6 +242,7 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
                 state = await self._normal_tick()
         finally:
             await self._maybe_poll_stats()
+            await self._maybe_poll_logfile()
         return state
 
     async def _normal_tick(self) -> XToolS1State:  # noqa: PLR0911
@@ -295,6 +334,41 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
         except XToolS1ConnectionError:
             return
         self._last_stats_poll = now
+
+    async def _maybe_poll_logfile(self) -> None:
+        """Parse per-tool counters from logs.txt and truncate if too large.
+
+        The firmware writes accumulated stats like ``acc_40w_laserworktime``
+        to logs.txt periodically. We tail the last 5 KB, parse the
+        counters, and if the file exceeds LOGFILE_MAX_SIZE we truncate it
+        to prevent it from going stale (the firmware stops writing when
+        the file is too big).
+        """
+        if self._mode == MODE_OFFLINE:
+            return
+        now = time.monotonic()
+        if now - self._last_logfile_poll < LOGFILE_POLL_INTERVAL:
+            return
+        self._last_logfile_poll = now
+
+        # Check size and truncate if needed
+        size = await self.client.fetch_logfile_size()
+        if size is not None and size > LOGFILE_MAX_SIZE:
+            _LOGGER.info(
+                "S1 %s logs.txt is %d bytes (> %d), truncating",
+                self.client.host,
+                size,
+                LOGFILE_MAX_SIZE,
+            )
+            await self.client.truncate_logfile()
+
+        # Parse the tail for per-tool counters
+        tail = await self.client.fetch_logfile_tail()
+        if tail is None:
+            return
+        counters = _parse_logfile_counters(tail)
+        if counters:
+            self.async_set_updated_data(replace(self.client.state, **counters))
 
     # -- HTTP heartbeat -------------------------------------------------
 

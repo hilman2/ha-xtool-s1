@@ -23,6 +23,7 @@ from custom_components.xtool_s1.coordinator import (
     MODE_NORMAL,
     MODE_OFFLINE,
     XToolS1Coordinator,
+    _parse_logfile_counters,
 )
 
 from .const import MOCK_HOST, MOCK_SERIAL
@@ -275,6 +276,9 @@ def _make_fake_client() -> MagicMock:
     client.probe_initial_state = AsyncMock(return_value=XToolS1State())
     client.fetch_mac_http = AsyncMock(return_value="aa:bb:cc:dd:ee:ff")
     client.request_stats = AsyncMock()
+    client.fetch_logfile_size = AsyncMock(return_value=None)
+    client.fetch_logfile_tail = AsyncMock(return_value=None)
+    client.truncate_logfile = AsyncMock()
     client.on_state = MagicMock(return_value=lambda: None)
     return client
 
@@ -563,3 +567,125 @@ async def test_enter_mode_noop_when_unchanged(hass: HomeAssistant) -> None:
     initial = coordinator._mode_changed_at
     coordinator._enter_mode(MODE_NORMAL)
     assert coordinator._mode_changed_at == initial
+
+
+# --- logfile parsing + maintenance ----------------------------------------
+
+
+def test_parse_logfile_counters_full() -> None:
+    """The parser extracts all per-tool and global counters."""
+    tail = """\
+acc_worktime:151566;
+acc_workcount:228;
+acc_sys_runtime:1293589;
+acc_2w_laserworktime:880;
+acc_default_laserworktime:0;
+acc_10w_laserworktime:0;
+acc_20w_laserworktime:0;
+acc_40w_laserworktime:3086;
+"""
+    result = _parse_logfile_counters(tail)
+    assert result["working_seconds"] == 151566
+    assert result["session_count"] == 228
+    assert result["standby_seconds"] == 1293589
+    assert result["logfile_tool_times"] == {
+        "2w": 880,
+        "default": 0,
+        "10w": 0,
+        "20w": 0,
+        "40w": 3086,
+    }
+
+
+def test_parse_logfile_counters_empty() -> None:
+    """An empty or irrelevant tail returns an empty dict."""
+    assert _parse_logfile_counters("") == {}
+    assert _parse_logfile_counters("some random log line\n") == {}
+
+
+def test_parse_logfile_counters_takes_last_occurrence() -> None:
+    """When the tail has multiple counter blocks, the LAST one wins."""
+    tail = """\
+acc_worktime:100;
+acc_workcount:5;
+acc_worktime:200;
+acc_workcount:10;
+"""
+    result = _parse_logfile_counters(tail)
+    assert result["working_seconds"] == 200
+    assert result["session_count"] == 10
+
+
+@pytest.mark.asyncio
+async def test_maybe_poll_logfile_parses_counters(
+    hass: HomeAssistant,
+) -> None:
+    """The logfile poll updates the coordinator data with parsed counters."""
+    client = _make_fake_client()
+    client.fetch_logfile_size = AsyncMock(return_value=500)
+    client.fetch_logfile_tail = AsyncMock(
+        return_value="acc_40w_laserworktime:3086;\nacc_worktime:151566;\n"
+    )
+    coordinator = _make_coordinator(hass, client)
+    coordinator._last_logfile_poll = time.monotonic() - 9999
+
+    await coordinator._maybe_poll_logfile()
+    client.fetch_logfile_tail.assert_awaited()
+    client.truncate_logfile.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_poll_logfile_truncates_when_large(
+    hass: HomeAssistant,
+) -> None:
+    """logs.txt over 1 MB triggers a truncation."""
+    client = _make_fake_client()
+    client.fetch_logfile_size = AsyncMock(return_value=2_000_000)
+    client.fetch_logfile_tail = AsyncMock(return_value="")
+    client.truncate_logfile = AsyncMock()
+    coordinator = _make_coordinator(hass, client)
+    coordinator._last_logfile_poll = time.monotonic() - 9999
+
+    await coordinator._maybe_poll_logfile()
+    client.truncate_logfile.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_poll_logfile_skipped_when_offline(
+    hass: HomeAssistant,
+) -> None:
+    """Logfile poll is a no-op in offline mode."""
+    client = _make_fake_client()
+    coordinator = _make_coordinator(hass, client)
+    coordinator._enter_mode(MODE_OFFLINE)
+
+    await coordinator._maybe_poll_logfile()
+    client.fetch_logfile_size.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_poll_logfile_skipped_when_recently_polled(
+    hass: HomeAssistant,
+) -> None:
+    """Logfile poll is skipped within the interval."""
+    client = _make_fake_client()
+    coordinator = _make_coordinator(hass, client)
+    coordinator._last_logfile_poll = time.monotonic()
+
+    await coordinator._maybe_poll_logfile()
+    client.fetch_logfile_size.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_poll_logfile_handles_none_tail(
+    hass: HomeAssistant,
+) -> None:
+    """If fetch_logfile_tail returns None, poll silently does nothing."""
+    client = _make_fake_client()
+    client.fetch_logfile_size = AsyncMock(return_value=100)
+    client.fetch_logfile_tail = AsyncMock(return_value=None)
+    coordinator = _make_coordinator(hass, client)
+    coordinator._last_logfile_poll = time.monotonic() - 9999
+
+    await coordinator._maybe_poll_logfile()
+    # No crash, no state update

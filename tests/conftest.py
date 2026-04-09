@@ -95,6 +95,7 @@ class FakeS1Server:
         self.http_fail = http_fail
         self.received: list[str] = []
         self.http_received: list[str] = []
+        self.logfile_content: str = ""
         self._ws_runner: web.AppRunner | None = None
         self._ws_site: web.TCPSite | None = None
         self._http_runner: web.AppRunner | None = None
@@ -129,6 +130,8 @@ class FakeS1Server:
         http_app.router.add_route(
             "GET", "/gcode/tmp.gcode", self._handle_gcode_download
         )
+        http_app.router.add_route("GET", "/gcode/logs.txt", self._handle_logfile)
+        http_app.router.add_route("HEAD", "/gcode/logs.txt", self._handle_logfile_head)
         self._http_runner = web.AppRunner(http_app)
         await self._http_runner.setup()
         self._http_site = web.TCPSite(self._http_runner, self.host, 0)
@@ -192,6 +195,26 @@ class FakeS1Server:
         if self.http_fail:
             return web.Response(status=500, text="boom")
         return web.Response(text="G0X10\nG1X20\n")
+
+    async def _handle_logfile(self, request: web.Request) -> web.Response:
+        if self.http_fail:
+            return web.Response(status=500, text="boom")
+        body = self.logfile_content.encode("utf-8")
+        # Support Range header for tail reads
+        range_hdr = request.headers.get("Range", "")
+        if range_hdr.startswith("bytes=-"):
+            tail_n = int(range_hdr[len("bytes=-") :])
+            body = body[-tail_n:]
+            return web.Response(status=206, body=body)
+        return web.Response(body=body)
+
+    async def _handle_logfile_head(self, request: web.Request) -> web.Response:
+        if self.http_fail:
+            return web.Response(status=500, text="boom")
+        size = len(self.logfile_content.encode("utf-8"))
+        return web.Response(
+            headers={"Content-Length": str(size)},
+        )
 
     async def push(self, frame: str) -> None:
         """Send a raw text frame to all connected clients."""
