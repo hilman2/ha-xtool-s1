@@ -71,10 +71,18 @@ async def test_all_expected_sensors_created(
         "firmware_aux_1",
         "firmware_aux_2",
         "firmware_tool",
+        "tool_type",
+        "tool_power",
         "tool_firmware",
         "tool_capabilities",
+        "tool_runtime",
         "tool_offset_x",
         "tool_offset_y",
+        "standby_time",
+        "position_x",
+        "position_y",
+        "position_z",
+        "probe_z",
     ):
         assert sensors[key].disabled_by is er.RegistryEntryDisabler.INTEGRATION
 
@@ -86,10 +94,16 @@ async def test_all_expected_sensors_created(
         "firmware_tool",
         "serial_number",
         "tool_type",
+        "tool_power",
         "tool_firmware",
         "tool_capabilities",
+        "tool_runtime",
         "tool_offset_x",
         "tool_offset_y",
+        "standby_time",
+        "position_x",
+        "position_y",
+        "position_z",
         "probe_z",
     }
     for key, entry_obj in sensors.items():
@@ -124,7 +138,7 @@ async def test_status_sensor_native_value(
 
 
 @pytest.mark.asyncio
-async def test_position_and_fan_values(
+async def test_light_brightness_value(
     hass: HomeAssistant, fake_s1_server_running
 ) -> None:
     entry = MockConfigEntry(
@@ -138,14 +152,8 @@ async def test_position_and_fan_values(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    pos_x = hass.states.get("sensor.xtool_s1_position_x")
-    pos_y = hass.states.get("sensor.xtool_s1_position_y")
     light = hass.states.get("sensor.xtool_s1_light_brightness")
-    assert pos_x is not None and float(pos_x.state) == -12.5
-    assert pos_y is not None and float(pos_y.state) == 45.2
     # M13 A/B is the fill-light brightness, not fans (see api.py docstring).
-    # The sensor exposes the A channel (both channels carry the same value
-    # via the app, but the fixture differs to keep the helpers honest).
     assert light is not None and int(light.state) == 85
 
 
