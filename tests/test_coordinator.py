@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import UpdateFailed
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -73,34 +72,37 @@ async def test_push_state_propagates_to_coordinator(
 
 
 @pytest.mark.asyncio
-async def test_first_refresh_failure_raises_update_failed(hass: HomeAssistant) -> None:
-    """A connect failure during a watchdog tick becomes UpdateFailed."""
+async def test_first_refresh_failure_returns_power_off_snapshot(
+    hass: HomeAssistant,
+) -> None:
+    """A connect failure returns a power-off snapshot (no UpdateFailed)."""
     entry = _mock_entry()
     entry.add_to_hass(hass)
     session = async_get_clientsession(hass)
     # Point at a port nothing listens on.
     client = XToolS1Client("127.0.0.1", session, port=1)
     coordinator = XToolS1Coordinator(hass, entry, client)
-    with pytest.raises(UpdateFailed):
-        await coordinator._async_update_data()
+    state = await coordinator._async_update_data()
+    assert isinstance(state, XToolS1State)
+    assert state.connected is False
 
 
 @pytest.mark.asyncio
-async def test_watchdog_ping_failure_raises_update_failed(
+async def test_watchdog_ping_failure_returns_power_off_snapshot(
     hass: HomeAssistant, fake_s1_server
 ) -> None:
-    """If the WS dies between polls, the next poll must raise UpdateFailed."""
+    """If the WS dies between polls, the next poll returns a power-off state."""
     coordinator, client, _ = await _build(
         hass, fake_s1_server.host, fake_s1_server.port
     )
     try:
         await coordinator._async_update_data()
-        # Force the client to look connected, then make ping fail mid-call.
-        with (
-            patch.object(client, "ping", side_effect=XToolS1ConnectionError("dropped")),
-            pytest.raises(UpdateFailed),
+        with patch.object(
+            client, "ping", side_effect=XToolS1ConnectionError("dropped")
         ):
-            await coordinator._async_update_data()
+            state = await coordinator._async_update_data()
+        assert isinstance(state, XToolS1State)
+        assert state.connected is False
     finally:
         await coordinator.async_shutdown()
 
@@ -182,10 +184,7 @@ async def test_kick_detection_climbs_backoff(
     try:
         await coordinator._async_update_data()
         # Force the client into a "lost connection" state and re-tick.
-        with (
-            patch.object(client, "ping", side_effect=XToolS1ConnectionError("kicked")),
-            pytest.raises(UpdateFailed),
-        ):
+        with patch.object(client, "ping", side_effect=XToolS1ConnectionError("kicked")):
             await coordinator._async_update_data()
         # The backoff should now be active and the index should be > 0
         assert coordinator._backoff_index > 0
@@ -215,25 +214,25 @@ async def test_http_heartbeat_keeps_entry_available(
 
 
 @pytest.mark.asyncio
-async def test_http_heartbeat_failure_raises_update_failed(
+async def test_http_heartbeat_failure_returns_power_off_snapshot(
     hass: HomeAssistant, fake_s1_server
 ) -> None:
-    """If both WS and HTTP heartbeat fail, UpdateFailed is raised."""
+    """If both WS and HTTP fail, returns a power-off snapshot (no error)."""
     coordinator, client, _entry = await _build_with_http(hass, fake_s1_server)
     try:
         await coordinator._async_update_data()
         await client.disconnect()
         coordinator._next_reconnect_at = float("inf")
-        # Make the HTTP heartbeat fail too
-        with (
-            patch.object(
-                client,
-                "fetch_mac_http",
-                side_effect=XToolS1ConnectionError("offline"),
-            ),
-            pytest.raises(UpdateFailed),
+        with patch.object(
+            client,
+            "fetch_mac_http",
+            side_effect=XToolS1ConnectionError("offline"),
         ):
-            await coordinator._async_update_data()
+            state = await coordinator._async_update_data()
+        assert isinstance(state, XToolS1State)
+        assert state.connected is False
+        assert state.light_brightness_a == 0
+        assert state.alarm_present is False
     finally:
         await coordinator.async_shutdown()
 
@@ -312,15 +311,18 @@ async def test_async_update_dispatches_to_offline_tick(hass: HomeAssistant) -> N
 
 
 @pytest.mark.asyncio
-async def test_offline_tick_still_failing_raises(hass: HomeAssistant) -> None:
-    """A still-failing HTTP heartbeat in offline mode raises UpdateFailed."""
+async def test_offline_tick_still_failing_returns_power_off(
+    hass: HomeAssistant,
+) -> None:
+    """A still-failing HTTP heartbeat returns a power-off snapshot (no error)."""
     client = _make_fake_client()
     client.fetch_mac_http.side_effect = XToolS1ConnectionError("offline")
     coordinator = _make_coordinator(hass, client)
     coordinator._enter_mode(MODE_OFFLINE)
 
-    with pytest.raises(UpdateFailed):
-        await coordinator._async_update_data()
+    state = await coordinator._async_update_data()
+    assert isinstance(state, XToolS1State)
+    assert state.connected is False
     assert coordinator.mode == MODE_OFFLINE
 
 
@@ -343,11 +345,11 @@ async def test_coexist_tick_http_failure_marks_offline(hass: HomeAssistant) -> N
     client.fetch_mac_http.side_effect = XToolS1ConnectionError("nope")
     coordinator = _make_coordinator(hass, client)
     coordinator._enter_mode(MODE_COEXIST)
-    # Pretend HTTP has been failing for a long time so _mark_offline flips it.
     coordinator._http_failing_since = time.monotonic() - 9999
 
-    with pytest.raises(UpdateFailed):
-        await coordinator._coexist_tick()
+    state = await coordinator._coexist_tick()
+    assert isinstance(state, XToolS1State)
+    assert state.connected is False
     assert coordinator.mode == MODE_OFFLINE
 
 
@@ -510,15 +512,17 @@ async def test_mark_http_ok_recovers_from_offline(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mark_offline_after_long_http_failure(hass: HomeAssistant) -> None:
-    """``_mark_offline`` flips to OFFLINE after the failure-window expires."""
+async def test_power_off_snapshot_flips_to_offline(hass: HomeAssistant) -> None:
+    """``_power_off_snapshot`` enters OFFLINE after the failure-window expires."""
     client = _make_fake_client()
     coordinator = _make_coordinator(hass, client)
-    # Pretend HTTP has been failing for over the offline threshold.
     coordinator._http_failing_since = time.monotonic() - 9999
 
-    with pytest.raises(UpdateFailed):
-        await coordinator._mark_offline()
+    state = coordinator._power_off_snapshot()
+    assert isinstance(state, XToolS1State)
+    assert state.connected is False
+    assert state.light_brightness_a == 0
+    assert state.alarm_present is False
     assert coordinator.mode == MODE_OFFLINE
 
 

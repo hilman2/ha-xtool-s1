@@ -155,13 +155,6 @@ class XToolS1BinarySensor(XToolS1Entity, BinarySensorEntity):
         self.entity_description = description
 
     @property
-    def available(self) -> bool:
-        """Connection sensor must stay available so users can see ``off``."""
-        if self.entity_description.key == BINARY_SENSOR_CONNECTION:
-            return self.coordinator.data is not None
-        return super().available
-
-    @property
     def is_on(self) -> bool | None:
         """Return the boolean value extracted from the latest state."""
         if self.coordinator.data is None:

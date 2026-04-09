@@ -38,14 +38,14 @@ Periodic side jobs:
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 import logging
 import time
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import XToolS1Client, XToolS1ConnectionError, XToolS1State
 from .const import (
@@ -212,27 +212,25 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
             if self._is_in_backoff():
                 if await self._http_heartbeat():
                     return self.client.state
-                return await self._mark_offline()
+                return self._power_off_snapshot()
 
             try:
                 state = await self.client.probe_initial_state()
-            except XToolS1ConnectionError as err:
+            except XToolS1ConnectionError:
                 self._note_disconnected(kicked=False)
                 if self._mode == MODE_COEXIST:
                     # The kick-storm check switched us mid-call.
                     return await self._coexist_tick()
                 if await self._http_heartbeat():
                     return self.client.state
-                raise UpdateFailed(
-                    f"Cannot reach xTool S1 at {self.client.host}: {err}"
-                ) from err
+                return self._power_off_snapshot()
             self._note_connected()
             self._mark_http_ok()
             return state
 
         try:
             await self.client.ping()
-        except XToolS1ConnectionError as err:
+        except XToolS1ConnectionError:
             kicked = (
                 self._connected_at is not None
                 and time.monotonic() - self._connected_at < _KICK_DETECTION_SECONDS
@@ -240,9 +238,7 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
             self._note_disconnected(kicked=kicked)
             if self._mode == MODE_COEXIST:
                 return await self._coexist_tick()
-            raise UpdateFailed(
-                f"Lost connection to xTool S1 at {self.client.host}: {err}"
-            ) from err
+            return self._power_off_snapshot()
         self._mark_http_ok()  # ping success implies the device is up
         return self.client.state
 
@@ -260,7 +256,7 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
             await self.client.disconnect()
 
         if not await self._http_heartbeat():
-            return await self._mark_offline()
+            return self._power_off_snapshot()
 
         since_mode = time.monotonic() - self._mode_changed_at
         if since_mode > COEXIST_RECOVERY_AFTER:
@@ -284,7 +280,8 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
         if await self._http_heartbeat():
             self._enter_mode(MODE_NORMAL)
             return self.client.state
-        raise UpdateFailed(f"xTool S1 at {self.client.host} is not reachable")
+        # Device is off — normal state, no error.
+        return self._power_off_snapshot()
 
     async def _maybe_poll_stats(self) -> None:
         """Send ``M2008`` periodically to refresh lifetime counters."""
@@ -323,13 +320,39 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
             self._http_failing_since = time.monotonic()
         return False
 
-    async def _mark_offline(self) -> XToolS1State:
+    def _power_off_snapshot(self) -> XToolS1State:
+        """Return a state snapshot suitable for a powered-off device.
+
+        Preserves info fields (firmware, serial, counters, tool) from
+        the last known state but zeros all dynamic/operational fields
+        so HA shows a clean "device is off" picture without going
+        unavailable.
+        """
         if (
             self._http_failing_since is not None
             and time.monotonic() - self._http_failing_since >= _OFFLINE_AFTER_HTTP_FAILS
         ):
             self._enter_mode(MODE_OFFLINE)
-        raise UpdateFailed(f"xTool S1 at {self.client.host} is not reachable")
+
+        last = self.client.state
+        return replace(
+            last,
+            connected=False,
+            work_state_raw=None,
+            job_file=None,
+            pos_x=None,
+            pos_y=None,
+            pos_z=None,
+            pos_u=None,
+            probe_z=last.probe_z,  # keep last reading
+            light_brightness_a=0,
+            light_brightness_b=0,
+            light_active=False,
+            alarm_raw=None,
+            alarm_present=False,
+            m22_state=None,
+            m323_ack_count=0,
+        )
 
     async def async_shutdown(self) -> None:
         """Cancel the push subscription and close the WebSocket."""

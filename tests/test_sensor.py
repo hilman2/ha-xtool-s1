@@ -248,43 +248,21 @@ def test_sensor_native_value_when_data_is_none() -> None:
 
 
 def test_entity_unavailable_when_data_is_none() -> None:
-    """The entity base class reports unavailable when data is None."""
+    """The entity is unavailable only when no data has ever arrived."""
     from unittest.mock import MagicMock
 
     from custom_components.xtool_s1.entity import XToolS1Entity
 
     coordinator = MagicMock()
-    coordinator.last_update_success = True
     coordinator.data = None
     entity = XToolS1Entity.__new__(XToolS1Entity)
     entity._attr_translation_key = "status"
     entity.coordinator = coordinator
-    # super().available is True (last_update_success), but data is None,
-    # so available falls through to False.
     assert entity.available is False
 
 
-def test_entity_unavailable_when_super_available_false() -> None:
-    """Entity propagates the coordinator's last_update_success failure."""
-    from unittest.mock import MagicMock
-
-    from custom_components.xtool_s1.entity import XToolS1Entity
-
-    coordinator = MagicMock()
-    coordinator.last_update_success = False
-    coordinator.data = MagicMock(connected=True)
-    entity = XToolS1Entity.__new__(XToolS1Entity)
-    entity._attr_translation_key = "status"
-    entity.coordinator = coordinator
-    # Force CoordinatorEntity.available to return False by mocking it.
-    entity.hass = MagicMock()
-    entity.hass.is_running = True
-    # super().available reads coordinator.last_update_success → False.
-    assert entity.available is False
-
-
-def test_entity_unavailable_when_offline_mode() -> None:
-    """An entity in offline mode is unconditionally unavailable."""
+def test_entity_always_available_with_data() -> None:
+    """Once data exists, entity stays available even if device is offline."""
     from unittest.mock import MagicMock
 
     from custom_components.xtool_s1.coordinator import MODE_OFFLINE
@@ -292,17 +270,16 @@ def test_entity_unavailable_when_offline_mode() -> None:
 
     coordinator = MagicMock()
     coordinator.mode = MODE_OFFLINE
-    coordinator.last_update_success = True
-    coordinator.data = MagicMock(connected=True)
+    coordinator.data = MagicMock(connected=False)
     entity = XToolS1Entity.__new__(XToolS1Entity)
     entity._attr_translation_key = "status"
     entity.coordinator = coordinator
-    assert entity.available is False
-    assert entity.extra_state_attributes == {}
+    # Device is off — but entity stays available.
+    assert entity.available is True
 
 
-def test_entity_available_in_coexist_with_cached_data() -> None:
-    """Coexist mode keeps cached data available and tags it stale."""
+def test_entity_stale_attribute_in_coexist() -> None:
+    """Coexist mode tags entities with stale: True."""
     from unittest.mock import MagicMock
 
     from custom_components.xtool_s1.coordinator import MODE_COEXIST
@@ -310,12 +287,10 @@ def test_entity_available_in_coexist_with_cached_data() -> None:
 
     coordinator = MagicMock()
     coordinator.mode = MODE_COEXIST
-    coordinator.last_update_success = True
     coordinator.data = MagicMock(connected=False)
     entity = XToolS1Entity.__new__(XToolS1Entity)
     entity._attr_translation_key = "status"
     entity.coordinator = coordinator
-    # Coexist returns True regardless of data.connected.
     assert entity.available is True
     assert entity.extra_state_attributes == {"stale": True}
 

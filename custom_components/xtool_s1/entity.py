@@ -24,7 +24,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL
-from .coordinator import MODE_COEXIST, MODE_OFFLINE, XToolS1Coordinator
+from .coordinator import MODE_COEXIST, XToolS1Coordinator
 
 
 def _build_device_info(coordinator: XToolS1Coordinator) -> DeviceInfo:
@@ -64,23 +64,15 @@ class XToolS1Entity(CoordinatorEntity[XToolS1Coordinator]):
 
     @property
     def available(self) -> bool:
-        """Return True unless the device is offline.
+        """Always available once the first data snapshot has arrived.
 
-        In coexist mode we keep entities available with the last known
-        cached state — going unavailable would break HA automations
-        every time the user opens XCS.
+        The laser is normally powered off most of the time — that is
+        NOT an error. Dynamic sensors return their "off" values via
+        the coordinator's power-off snapshot; info sensors keep their
+        last known value. The ``connection`` binary sensor is the
+        indicator for "device is on".
         """
-        if self.coordinator.mode == MODE_OFFLINE:
-            return False
-        if not super().available:
-            return False
-        data = self.coordinator.data
-        if data is None:
-            return False
-        if self.coordinator.mode == MODE_COEXIST:
-            # Cached state is OK in coexist mode.
-            return True
-        return data.connected
+        return self.coordinator.data is not None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -112,5 +104,10 @@ class XToolS1HttpEntity(CoordinatorEntity[XToolS1Coordinator]):
 
     @property
     def available(self) -> bool:
-        """HTTP-only entities are available iff the HTTP gateway is up."""
-        return self.coordinator.http_reachable
+        """Always available once the first data snapshot has arrived.
+
+        HTTP-only entities (light, buttons) stay available even when
+        the device is off — pressing a button while the laser is off
+        simply fails silently rather than hiding the control entirely.
+        """
+        return self.coordinator.data is not None
