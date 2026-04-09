@@ -70,8 +70,8 @@ from aiohttp import (
 from .const import (
     CONFIG_FLOW_PROBE_TIMEOUT,
     HTTP_PORT,
-    MCODE_PAUSE_PLACEHOLDER,
-    MCODE_RESUME_PLACEHOLDER,
+    MCODE_PAUSE,
+    MCODE_RESUME_BEST_EFFORT,
     SCAN_MAX_HOSTS,
     UDP_DISCOVERY_BROADCAST_ADDR,
     UDP_DISCOVERY_PORT,
@@ -513,26 +513,31 @@ class XToolS1Client:
         await self.send_command_http("M108")
 
     async def pause_job(self) -> None:
-        """Pause the running job (PROVISIONAL).
+        """Pause the running job.
 
-        The exact M-code the XCS app uses for Pause has not yet been
-        isolated from a packet capture — what we know is the
-        *response* state machine: M22 flips to S1 and M222 transitions
-        to S15. The current placeholder ``M22 S1`` is an educated
-        guess based on that observation. Will be replaced once the
-        real trigger is captured.
+        Verified live against hilman2's S1 on 2026-04-09: the XCS
+        desktop app sends a bare ``M22 S1`` and the device responds
+        with a ``M22 S1`` echo, ``M222 S15`` (paused state) and
+        ``M15 A1 S0`` (fill light off). Routed via HTTP ``POST /cmd``
+        so the command survives concurrent XCS-app activity.
         """
-        await self.send_command_http(MCODE_PAUSE_PLACEHOLDER)
+        await self.send_command_http(MCODE_PAUSE)
 
     async def resume_job(self) -> None:
-        """Resume a paused job (PROVISIONAL).
+        """Resume a paused job (best-effort, hardware button preferred).
 
-        Same caveat as :meth:`pause_job` — placeholder ``M22 S2``
-        based on the observed response pattern. The S1 is likely to
-        also require a physical button press to actually resume after
-        the network command, similar to the start safety lock.
+        The S1 firmware does **not** accept a network resume request:
+        a Wireshark capture on 2026-04-09 showed the user had to press
+        the physical Start button on the device for the laser to
+        transition out of S15. Once they did, the laser pushed
+        ``M222 S14`` followed by ``M22 S2`` to all connected clients
+        — but no App→Laser command was sent.
+
+        This method nonetheless sends ``M22 S2`` as a best-effort
+        signal in case a future firmware accepts it. Today it is
+        effectively a no-op without a physical press.
         """
-        await self.send_command_http(MCODE_RESUME_PLACEHOLDER)
+        await self.send_command_http(MCODE_RESUME_BEST_EFFORT)
 
     async def request_stats(self) -> None:
         """Request a fresh M2008 lifetime-counter push.

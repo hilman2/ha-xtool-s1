@@ -25,11 +25,11 @@ job-state derivation, and a true XCS-app coexistence mode.
 
 What v1.1 adds on top of v1.0:
 - **Stop button** (verified `M108` against the live device).
-- **Pause / Resume buttons** — provisional placeholders. The exact
-  trigger M-codes have not yet been isolated from a packet capture, so
-  these go out as buttons that wire your automations *now*; the
-  payload constants will be swapped out in a follow-up release without
-  breaking anything.
+- **Pause button** (verified `M22 S1` from a Wireshark capture).
+- **Resume button** — best-effort. The S1 firmware does **not**
+  accept a network resume request; the user must press the physical
+  Start button on the device. The button is kept as an automation
+  hook and sends `M22 S2` in case a future firmware honours it.
 - **Tool detection** — the integration now identifies the installed
   laser head from its firmware fingerprint (e.g. *Diode 40 W*,
   *Infrared 2 W*) and exposes its rated power, capability bitmap and
@@ -131,8 +131,8 @@ open and pounding the WebSocket.
 | binary_sensor | Connection | `connectivity` | WebSocket session is up *(diagnostic)* |
 | **light** | Fill light | brightness | Dimmable interior fill light, controllable from HA |
 | **button** | Stop | — | Abort the running job (verified `M108`) |
-| **button** | Pause | — | Pause the running job (provisional payload) |
-| **button** | Resume | — | Resume a paused job (provisional payload) |
+| **button** | Pause | — | Pause the running job (verified `M22 S1`) |
+| **button** | Resume | — | Best-effort `M22 S2`; physical Start button required |
 
 ---
 

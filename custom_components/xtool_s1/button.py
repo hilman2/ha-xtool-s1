@@ -11,18 +11,14 @@ Status (verified against hilman2's S1 on 2026-04-09):
 * **Stop** — `M108`. Verified live: the device acks with `M108 ok`
   and runs the shutdown state machine (S18 → S1 → S3, with M22
   sticky at S1 as the abnormal-finish marker).
-* **Pause** — placeholder. The exact M-code the XCS app sends has
-  not yet been isolated from a packet capture; the placeholder
-  ``M22 S1`` is an educated guess based on the *response* state
-  machine. Will be replaced once the real trigger is captured.
-* **Resume** — same caveat as Pause. Placeholder ``M22 S2``. The
-  device may also require a physical button press to actually
-  resume, similar to the start safety lock.
-
-The two placeholder buttons stay in the integration with their
-provisional payloads so users can wire automations against them
-today; once we ship the real M-codes, only the constants in
-``const.py`` change and existing automations keep working.
+* **Pause** — `M22 S1`. Verified from the same Wireshark capture:
+  the device echoes ``M22 S1``, transitions ``M222`` to S15 and
+  dims the fill light to ``M15 A1 S0``.
+* **Resume** — best-effort. The S1 firmware does **not** accept a
+  network resume request — the user must press the physical Start
+  button on the device. The button is kept as a documentation /
+  automation entity and sends ``M22 S2`` in case a future firmware
+  starts honouring it; expect it to be a no-op until then.
 """
 
 from __future__ import annotations

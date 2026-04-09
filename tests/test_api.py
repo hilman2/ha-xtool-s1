@@ -449,8 +449,8 @@ async def test_stop_pause_resume_request_stats_use_http(fake_s1_server, hass) ->
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
     from custom_components.xtool_s1.const import (
-        MCODE_PAUSE_PLACEHOLDER,
-        MCODE_RESUME_PLACEHOLDER,
+        MCODE_PAUSE,
+        MCODE_RESUME_BEST_EFFORT,
     )
 
     session = async_get_clientsession(hass)
@@ -465,8 +465,8 @@ async def test_stop_pause_resume_request_stats_use_http(fake_s1_server, hass) ->
     await client.resume_job()
     await client.request_stats()
     assert "M108" in fake_s1_server.http_received
-    assert MCODE_PAUSE_PLACEHOLDER in fake_s1_server.http_received
-    assert MCODE_RESUME_PLACEHOLDER in fake_s1_server.http_received
+    assert MCODE_PAUSE in fake_s1_server.http_received
+    assert MCODE_RESUME_BEST_EFFORT in fake_s1_server.http_received
     assert "M2008" in fake_s1_server.http_received
 
 

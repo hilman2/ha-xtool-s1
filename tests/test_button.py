@@ -16,8 +16,8 @@ from custom_components.xtool_s1.const import (
     BUTTON_RESUME,
     BUTTON_STOP,
     DOMAIN,
-    MCODE_PAUSE_PLACEHOLDER,
-    MCODE_RESUME_PLACEHOLDER,
+    MCODE_PAUSE,
+    MCODE_RESUME_BEST_EFFORT,
 )
 
 from .conftest import patch_ports
@@ -72,10 +72,10 @@ async def test_stop_button_press_sends_m108(
 
 
 @pytest.mark.asyncio
-async def test_pause_button_press_sends_placeholder(
+async def test_pause_button_press_sends_m22_s1(
     hass: HomeAssistant, fake_s1_server
 ) -> None:
-    """Pressing Pause posts the placeholder M-code."""
+    """Pressing Pause posts the verified ``M22 S1`` trigger."""
     entry = _entry(fake_s1_server.host)
     entry.add_to_hass(hass)
     with patch_ports(fake_s1_server):
@@ -88,16 +88,16 @@ async def test_pause_button_press_sends_placeholder(
             blocking=True,
         )
         match = await fake_s1_server.wait_for_http_received(
-            lambda line: line == MCODE_PAUSE_PLACEHOLDER, timeout=1.0
+            lambda line: line == MCODE_PAUSE, timeout=1.0
         )
-        assert match == MCODE_PAUSE_PLACEHOLDER
+        assert match == MCODE_PAUSE
 
 
 @pytest.mark.asyncio
-async def test_resume_button_press_sends_placeholder(
+async def test_resume_button_press_sends_best_effort_m22_s2(
     hass: HomeAssistant, fake_s1_server
 ) -> None:
-    """Pressing Resume posts the placeholder M-code."""
+    """Pressing Resume posts the best-effort ``M22 S2`` payload."""
     entry = _entry(fake_s1_server.host)
     entry.add_to_hass(hass)
     with patch_ports(fake_s1_server):
@@ -110,9 +110,9 @@ async def test_resume_button_press_sends_placeholder(
             blocking=True,
         )
         match = await fake_s1_server.wait_for_http_received(
-            lambda line: line == MCODE_RESUME_PLACEHOLDER, timeout=1.0
+            lambda line: line == MCODE_RESUME_BEST_EFFORT, timeout=1.0
         )
-        assert match == MCODE_RESUME_PLACEHOLDER
+        assert match == MCODE_RESUME_BEST_EFFORT
 
 
 @pytest.mark.asyncio
