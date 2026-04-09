@@ -120,26 +120,62 @@ All entities are created automatically per device.
 
 ## Job management
 
-Save the current job from the laser, then re-run it later directly from
-your phone without XCS.
+The integration can save jobs from the laser, store them in Home Assistant,
+and re-run them later. This turns the xTool S1 into a standalone batch
+machine: prepare a job once in XCS, save it, then repeat it as many times
+as you want from your phone. No computer needed after the initial setup.
 
-### Lovelace card
+### Saving a job
 
-The integration ships a custom card that auto-registers on installation.
-Add it to any dashboard:
+1. Design and run your job in XCS as usual
+2. Open the **xTool S1 Jobs** card in your HA dashboard
+3. Tap **Job speichern**
+4. Fill in the form:
+   - **Title**: a short name (e.g. "Phone stand cutout")
+   - **Description**: notes for your future self (e.g. "Birch 3 mm, vector cut")
+   - **Material**: the material you used (e.g. "Birch plywood")
+   - **Thickness**: material thickness in mm
+5. Tap **Speichern**
+
+The integration downloads the gcode directly from the laser's SD card and
+stores it together with the metadata you entered. The currently installed
+laser module (e.g. *Diode 40 W*) is detected and saved automatically.
+
+### Starting a saved job
+
+1. Open the **xTool S1 Jobs** card
+2. Find the job in the list and tap **Starten**
+3. A confirmation dialog appears showing material, thickness and laser
+   module. Verify that the correct material is loaded and the right laser
+   head is installed.
+4. Tap **Bestatigen & Starten**
+5. The integration uploads the gcode to the laser and triggers the start
+   sequence
+6. **Press the physical Start button on the device** to begin
+
+If the laser module has changed since the job was saved (e.g. you saved
+with the 40 W diode but the 2 W IR head is now installed), the integration
+blocks the start with a clear error message.
+
+### Batch workflow example
+
+Cutting 20 identical phone stands from plywood:
+
+1. Design the cut in XCS, run it once, save it in HA
+2. Remove the finished piece, load new material
+3. On your phone: tap **Starten** on the saved job, confirm, press the
+   button on the laser
+4. Repeat steps 2-3 for all 20 pieces
+
+No computer involved after the initial save.
+
+### Lovelace card setup
+
+The card auto-registers on installation. Add it to any dashboard:
 
 ```yaml
 type: custom:xtool-s1-jobs-card
 ```
-
-The card provides:
-- **Save**: downloads the current gcode from the laser and stores it with
-  title, description, material and thickness
-- **Job list**: shows all saved jobs with their metadata
-- **Start**: confirmation dialog showing material, thickness and laser
-  module, then uploads the job and triggers the start sequence.
-  The user must press the physical Start button on the device.
-- **Delete**: remove saved jobs
 
 ### Services
 
