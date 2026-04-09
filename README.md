@@ -43,6 +43,26 @@ and manage saved jobs — all from your phone, no XCS desktop app required.
 Copy `custom_components/xtool_s1/` into your HA `custom_components/` folder
 and restart Home Assistant.
 
+### Configuration
+
+The config flow offers two ways to find the laser:
+
+- **Network scan** — enter a CIDR range (e.g. `192.168.1.0/24`) and the
+  integration sends a UDP discovery broadcast on port 20000. Every S1 on
+  the network replies with its IP and name.
+- **Manual IP** — enter the laser's IP address or hostname directly.
+
+The integration connects via WebSocket (port 8081) and verifies the device
+by reading its serial number. No credentials are required.
+
+### Removal
+
+**Settings → Devices & Services → xTool S1 → ⋮ → Delete**
+
+This removes the integration, all entities, and the device. Saved jobs
+(from the job management card) are retained in HA storage and can be
+cleaned up manually if needed.
+
 ---
 
 ## Entities
@@ -151,6 +171,47 @@ HTTP and are unaffected by WebSocket issues.
 
 **Tip**: If XCS is connected via **USB** instead of WiFi, the WebSocket
 runs without interruption.
+
+### How data is updated
+
+| Source | Interval | Content |
+|---|---|---|
+| WebSocket push (port 8081) | Real-time | Status, position, alarm, job file, M22/M323 state |
+| Coordinator watchdog poll | 30 s | Reconnects dead sockets, sends M303 ping |
+| M2008 stats request | 5 min | Lifetime working time, session count, standby time |
+| Logfile tail (`/gcode/logs.txt`) | 10 min | Per-tool working times; truncates file if > 1 MB |
+
+---
+
+## Known limitations
+
+- **Job start requires physical button** — after uploading and triggering
+  a job via HA, the user must press the Start button on the device. This
+  is a firmware safety feature.
+- **XCS over WiFi causes WebSocket kicks** — the XCS desktop app polls
+  aggressively and the S1 firmware kicks competing clients. The
+  integration detects this and switches to coexist mode automatically.
+  Use XCS over USB to avoid this entirely.
+- **No HACS store icon** — HACS does not yet support local brand assets
+  for custom integrations. The icon shows correctly in HA's own
+  integration and device pages.
+- **SD card unavailable during jobs** — the logfile and gcode download
+  endpoints return errors while a job is running. The integration caches
+  the last known values.
+- **Single device per entry** — each config entry represents one laser.
+  Add multiple entries for multiple devices.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| All sensors show 0 / off | Laser is powered off | Normal — turn on the laser |
+| Sensors flicker or go stale | XCS app is open over WiFi | Close XCS or connect it via USB |
+| "Connection" sensor stays off | Wrong IP or laser not on network | Reconfigure with correct IP |
+| Job card shows no jobs | No jobs saved yet | Use "Job speichern" after running a job in XCS |
+| Start button does nothing | Laser not connected via WebSocket | Check connection sensor; restart integration if needed |
 
 ---
 
