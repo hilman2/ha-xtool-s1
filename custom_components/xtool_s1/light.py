@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .api import XToolS1ConnectionError
 from .const import LIGHT_FILL_LIGHT
 from .coordinator import XToolS1ConfigEntry
-from .entity import XToolS1Entity
+from .entity import XToolS1HttpEntity
 
 PARALLEL_UPDATES = 1  # the laser only has one light, serialise writes
 
@@ -40,8 +40,14 @@ async def async_setup_entry(
     async_add_entities([XToolS1FillLight(entry.runtime_data.coordinator)])
 
 
-class XToolS1FillLight(XToolS1Entity, LightEntity):
-    """Dimmable interior fill light driven by the M13 G-code."""
+class XToolS1FillLight(XToolS1HttpEntity, LightEntity):
+    """Dimmable interior fill light driven by the M13 G-code.
+
+    Inherits from :class:`XToolS1HttpEntity` so it stays available
+    even when the WebSocket is being kicked by the XCS desktop app —
+    the M13 write goes through ``POST /cmd`` and never depends on the
+    WS being up.
+    """
 
     _attr_translation_key = LIGHT_FILL_LIGHT
     _attr_color_mode = ColorMode.BRIGHTNESS

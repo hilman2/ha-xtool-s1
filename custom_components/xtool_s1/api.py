@@ -70,6 +70,8 @@ from aiohttp import (
 from .const import (
     CONFIG_FLOW_PROBE_TIMEOUT,
     HTTP_PORT,
+    MCODE_PAUSE_PLACEHOLDER,
+    MCODE_RESUME_PLACEHOLDER,
     SCAN_MAX_HOSTS,
     UDP_DISCOVERY_BROADCAST_ADDR,
     UDP_DISCOVERY_PORT,
@@ -138,13 +140,21 @@ class XToolS1State:
     # Static (cached across frames)
     serial_number: str | None = None
     firmware_version: str | None = None  # M99
-    firmware_aux_1: str | None = None  # M1199
+    firmware_aux_1: str | None = None  # M1199 — also a tool fingerprint
     firmware_aux_2: str | None = None  # M2099
     firmware_tool: str | None = None  # first non-empty entry of M1098 array
     model_name: str | None = None  # M100, e.g. "xTool S1"
-    tool_type: str | None = None
+    tool_type: str | None = None  # M54 (always "T1" — meaning unclear)
 
-    # Work state
+    # Tool capability bitmap from M116. The `Y` field is the wattage.
+    tool_capabilities_raw: str | None = None  # raw "X0Y40B1P1L2" string
+    tool_power_w: int | None = None  # parsed from M116.Y
+
+    # Tool mounting offset (mm) from M98.
+    tool_offset_x: float | None = None
+    tool_offset_y: float | None = None
+
+    # Work state (M222)
     work_state_raw: str | None = None
 
     # Job
@@ -171,6 +181,27 @@ class XToolS1State:
     # Alarm
     alarm_raw: str | None = None
     alarm_present: bool = False
+
+    # M22 secondary job-state indicator. Verified values:
+    #   "S0" = idle / between jobs
+    #   "S1" = job running, paused, OR last job was aborted (sticky!)
+    #   "S2" = transient "resuming" marker
+    m22_state: str | None = None
+
+    # Multi-stage M323 OK acknowledgement counter. The hardware safety
+    # lock requires TWO `M323 OK` pushes per job (one from XCS-side
+    # Start, one from the physical button). Reset to 0 on M222 S3.
+    m323_ack_count: int = 0
+
+    # M2008 lifetime statistics (verified against XCS app on 2026-04-09):
+    #   working_seconds = M2008.A — total working time across all tools
+    #   session_count   = M2008.B — "Betriebszeiten"
+    #   standby_seconds = M2008.C — total standby time
+    #   tool_runtime_seconds = M2008.D — working seconds of the *current* tool
+    working_seconds: int | None = None
+    session_count: int | None = None
+    standby_seconds: int | None = None
+    tool_runtime_seconds: int | None = None
 
     # Connection liveness — derived, not from the wire
     connected: bool = False
@@ -246,6 +277,85 @@ def _normalise_alarm(raw: str) -> tuple[str, bool]:
     raw = raw.strip()
     present = raw not in ("A0", "0", "")
     return raw, present
+
+
+# Regex for M116 capability bitmap: matches `Y<int>` to extract wattage.
+_M116_FIELD_RE = re.compile(r"([A-Z])([+-]?\d+(?:\.\d+)?)")
+
+
+def _parse_m116_payload(value: str) -> dict[str, Any]:
+    """Parse an ``M116`` capability bitmap like ``X0Y40B1P1L2``.
+
+    Verified against hilman2's device 2026-04-09:
+        40 W diode → X0Y40B1P1L2  (Y40 = 40 W)
+        2 W IR     → X1Y2B0P0L0   (Y2  = 2 W)
+
+    The ``Y`` field is the wattage in watts; the other letters are
+    capability flags whose meanings we don't yet have enough data
+    points to map. We surface the raw string for diagnostics and the
+    parsed wattage as a number.
+    """
+    out: dict[str, Any] = {"tool_capabilities_raw": value.strip() or None}
+    for match in _M116_FIELD_RE.finditer(value):
+        if match.group(1) == "Y":
+            # The numeric group is `[+-]?\d+(?:\.\d+)?`, so float() can never
+            # raise. The suppress() is defensive in case the regex is tightened.
+            with contextlib.suppress(ValueError):
+                out["tool_power_w"] = int(float(match.group(2)))
+            break
+    return out
+
+
+# Regex for M98 tool-offset payload: ``X0.32 Y25.88`` (space-separated).
+_M98_RE = re.compile(r"([XY])([+-]?\d+(?:\.\d+)?)")
+
+
+def _parse_m98_payload(value: str) -> dict[str, float]:
+    """Parse an ``M98`` tool-mounting offset like ``X0.32 Y25.88``."""
+    out: dict[str, float] = {}
+    # The regex constrains group(1) to ``[XY]`` and group(2) to a numeric
+    # literal, so neither the elif fall-through nor the float() ValueError
+    # are reachable in practice — the defensive scaffolding is here in case
+    # the regex is tightened later.
+    for match in _M98_RE.finditer(value):
+        try:
+            if match.group(1) == "X":
+                out["tool_offset_x"] = float(match.group(2))
+            else:  # match.group(1) == "Y" — the regex guarantees it
+                out["tool_offset_y"] = float(match.group(2))
+        except ValueError:  # pragma: no cover
+            continue
+    return out
+
+
+# Regex for M2008 lifetime counters: ``A151484 B219 C1263671 D3004``.
+_M2008_RE = re.compile(r"([A-D])(\d+)")
+
+
+def _parse_m2008_payload(value: str) -> dict[str, int]:
+    """Parse an ``M2008`` lifetime-counter payload.
+
+    Field mapping verified against the XCS app's statistics screen
+    on 2026-04-09:
+        A = working_seconds  (Arbeitszeit)
+        B = session_count    (Betriebszeiten)
+        C = standby_seconds  (Standby-Zeit)
+        D = tool_runtime_seconds (per current tool)
+    """
+    out: dict[str, int] = {}
+    field_map = {
+        "A": "working_seconds",
+        "B": "session_count",
+        "C": "standby_seconds",
+        "D": "tool_runtime_seconds",
+    }
+    # group(2) is `\d+` so int() never raises in practice — defensive only.
+    for match in _M2008_RE.finditer(value):
+        try:
+            out[field_map[match.group(1)]] = int(match.group(2))
+        except ValueError:  # pragma: no cover
+            continue
+    return out
 
 
 # --- client -----------------------------------------------------------------
@@ -388,6 +498,51 @@ class XToolS1Client:
             light_brightness_a=clamped,
             light_brightness_b=clamped,
         )
+
+    async def stop_job(self) -> None:
+        """Stop the running job (M108).
+
+        Verified live against hilman2's S1 on 2026-04-09: the XCS
+        desktop app sends ``M108`` (no args) and the device executes
+        the stop sequence (M108 ok ack → M222 S18 → S1 → S3, with M22
+        sticky at S1 as the abnormal-finish marker).
+
+        Routed through HTTP ``POST /cmd`` so the command survives any
+        concurrent XCS-app activity.
+        """
+        await self.send_command_http("M108")
+
+    async def pause_job(self) -> None:
+        """Pause the running job (PROVISIONAL).
+
+        The exact M-code the XCS app uses for Pause has not yet been
+        isolated from a packet capture — what we know is the
+        *response* state machine: M22 flips to S1 and M222 transitions
+        to S15. The current placeholder ``M22 S1`` is an educated
+        guess based on that observation. Will be replaced once the
+        real trigger is captured.
+        """
+        await self.send_command_http(MCODE_PAUSE_PLACEHOLDER)
+
+    async def resume_job(self) -> None:
+        """Resume a paused job (PROVISIONAL).
+
+        Same caveat as :meth:`pause_job` — placeholder ``M22 S2``
+        based on the observed response pattern. The S1 is likely to
+        also require a physical button press to actually resume after
+        the network command, similar to the start safety lock.
+        """
+        await self.send_command_http(MCODE_RESUME_PLACEHOLDER)
+
+    async def request_stats(self) -> None:
+        """Request a fresh M2008 lifetime-counter push.
+
+        The S1 doesn't push M2008 spontaneously — we have to ask. The
+        coordinator calls this on a slow timer (every few minutes) so
+        the working/standby/session counters stay reasonably current
+        without spamming the device.
+        """
+        await self.send_command_http("M2008")
 
     # -- HTTP gateway (port 8080) --------------------------------------
 
@@ -608,6 +763,28 @@ class XToolS1Client:
             except ValueError:  # pragma: no cover
                 return {}
 
+        if head == "M2008":
+            return _parse_m2008_payload(tail)
+
+        if head == "M22":
+            # `M22 S1`, `M22 S2`, `M22 S0` — secondary job-state indicator.
+            stripped = tail.strip()
+            return {"m22_state": stripped} if stripped else {}
+
+        if head == "M323":
+            # Each `M323 OK` push counts as one acknowledgement step in
+            # the multi-stage hardware safety lock.
+            stripped = tail.strip().upper()
+            if stripped == "OK":
+                return {"m323_ack_count": self._state.m323_ack_count + 1}
+            return {}
+
+        if head == "M116":
+            return _parse_m116_payload(tail)
+
+        if head == "M98":
+            return _parse_m98_payload(tail)
+
         # v2: AP2 support — M9039 air-cleaner frames go here.
 
         return {}
@@ -672,6 +849,14 @@ class XToolS1Client:
         if (m810 := data.get("M810")) is not None:
             value = str(m810).strip().strip('"')
             out["job_file"] = None if value.upper() == "NULL" else value
+
+        # M116 — tool capability bitmap (Y field = wattage)
+        if (m116 := data.get("M116")) is not None:
+            out.update(_parse_m116_payload(str(m116)))
+
+        # M98 — tool mounting offset (X, Y) in mm
+        if (m98 := data.get("M98")) is not None:
+            out.update(_parse_m98_payload(str(m98)))
 
         return out
 

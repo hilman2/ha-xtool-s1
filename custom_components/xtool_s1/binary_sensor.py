@@ -18,6 +18,9 @@ from .api import XToolS1State
 from .const import (
     BINARY_SENSOR_ALARM,
     BINARY_SENSOR_CONNECTION,
+    BINARY_SENSOR_JOB_ARMED,
+    BINARY_SENSOR_LAST_JOB_ABORTED,
+    BINARY_SENSOR_PAUSED,
     BINARY_SENSOR_RUNNING,
     RUNNING_WORK_STATES,
 )
@@ -46,12 +49,67 @@ def _connection_is_on(state: XToolS1State) -> bool:
     return state.connected
 
 
+def _paused_is_on(state: XToolS1State) -> bool:
+    """The job is paused (M222=S15)."""
+    return state.work_state_raw == "S15"
+
+
+def _last_job_aborted_is_on(state: XToolS1State) -> bool:
+    """Sticky abnormal-finish marker.
+
+    The S1 leaves M22 at S1 after a stopped job; a normal finish
+    resets M22 to S0. So when we are back at idle (S3) and M22 is
+    still S1, the previous job ended via Stop instead of finishing.
+    """
+    return state.work_state_raw == "S3" and state.m22_state == "S1"
+
+
+def _job_armed_is_on(state: XToolS1State) -> bool:
+    """Job loaded, waiting for the physical Start button.
+
+    Verified flow:
+      * the user clicks Start in XCS → first M323 OK push
+      * the laser blocks until the user presses the device's button
+      * a second M323 OK arrives, then M222 S13 (Starting)
+
+    So between the first and second M323 OK we sit at S3 with the
+    head positioned away from the parking spot. That's exactly the
+    moment we want to surface — perfect for an HA notification
+    "press the start button on the laser".
+    """
+    return (
+        state.work_state_raw == "S3"
+        and state.m323_ack_count == 1
+        and state.pos_x is not None
+        and state.pos_y is not None
+        # Park position is around X≈0, Y≈99.8 — anything noticeably
+        # different means the head has been moved by the job preload.
+        and not (abs(state.pos_x) < 5.0 and abs(state.pos_y - 99.8) < 5.0)
+    )
+
+
 BINARY_SENSOR_DESCRIPTIONS: tuple[XToolS1BinarySensorDescription, ...] = (
     XToolS1BinarySensorDescription(
         key=BINARY_SENSOR_RUNNING,
         translation_key=BINARY_SENSOR_RUNNING,
         device_class=BinarySensorDeviceClass.RUNNING,
         is_on_fn=_running_is_on,
+    ),
+    XToolS1BinarySensorDescription(
+        key=BINARY_SENSOR_PAUSED,
+        translation_key=BINARY_SENSOR_PAUSED,
+        is_on_fn=_paused_is_on,
+    ),
+    XToolS1BinarySensorDescription(
+        key=BINARY_SENSOR_LAST_JOB_ABORTED,
+        translation_key=BINARY_SENSOR_LAST_JOB_ABORTED,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        is_on_fn=_last_job_aborted_is_on,
+    ),
+    XToolS1BinarySensorDescription(
+        key=BINARY_SENSOR_JOB_ARMED,
+        translation_key=BINARY_SENSOR_JOB_ARMED,
+        is_on_fn=_job_armed_is_on,
     ),
     XToolS1BinarySensorDescription(
         key=BINARY_SENSOR_ALARM,
@@ -100,8 +158,6 @@ class XToolS1BinarySensor(XToolS1Entity, BinarySensorEntity):
     def available(self) -> bool:
         """Connection sensor must stay available so users can see ``off``."""
         if self.entity_description.key == BINARY_SENSOR_CONNECTION:
-            # Coordinator may be in a failed state but we still want to
-            # surface the connectivity sensor as "off" — not "unavailable".
             return self.coordinator.data is not None
         return super().available
 

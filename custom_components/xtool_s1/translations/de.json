@@ -68,10 +68,24 @@
           "idle": "Bereit",
           "ready": "Einsatzbereit",
           "measuring": "Misst",
+          "preparing": "Wird vorbereitet",
+          "frame": "Rahmenfahrt",
+          "motion": "Bewegung",
           "starting": "Startet",
           "running": "Läuft",
+          "paused": "Pausiert",
           "finishing": "Beendet",
           "unknown": "Unbekannt"
+        }
+      },
+      "last_job_outcome": {
+        "name": "Letzter Job",
+        "state": {
+          "idle": "Inaktiv",
+          "running": "Läuft",
+          "paused": "Pausiert",
+          "completed": "Abgeschlossen",
+          "aborted": "Abgebrochen"
         }
       },
       "firmware_version": {
@@ -92,6 +106,36 @@
       "tool_type": {
         "name": "Werkzeug-Typ"
       },
+      "tool_name": {
+        "name": "Eingesetztes Werkzeug"
+      },
+      "tool_power": {
+        "name": "Werkzeug-Leistung"
+      },
+      "tool_firmware": {
+        "name": "Werkzeug-Firmware-Kennung"
+      },
+      "tool_capabilities": {
+        "name": "Werkzeug-Eigenschaften"
+      },
+      "tool_runtime": {
+        "name": "Werkzeug-Laufzeit"
+      },
+      "tool_offset_x": {
+        "name": "Werkzeug-Offset X"
+      },
+      "tool_offset_y": {
+        "name": "Werkzeug-Offset Y"
+      },
+      "working_time": {
+        "name": "Arbeitszeit"
+      },
+      "standby_time": {
+        "name": "Standby-Zeit"
+      },
+      "session_count": {
+        "name": "Betriebszeiten"
+      },
       "job_file": {
         "name": "Job-Datei"
       },
@@ -100,6 +144,9 @@
       },
       "position_y": {
         "name": "Position Y"
+      },
+      "position_z": {
+        "name": "Position Z"
       },
       "probe_z": {
         "name": "Tastpunkt Z"
@@ -112,6 +159,15 @@
       "running": {
         "name": "Aktiv"
       },
+      "paused": {
+        "name": "Pausiert"
+      },
+      "last_job_aborted": {
+        "name": "Letzter Job abgebrochen"
+      },
+      "job_armed": {
+        "name": "Job vorbereitet"
+      },
       "alarm": {
         "name": "Alarm"
       },
@@ -122,6 +178,17 @@
     "light": {
       "fill_light": {
         "name": "Innenraumbeleuchtung"
+      }
+    },
+    "button": {
+      "stop": {
+        "name": "Stopp"
+      },
+      "pause": {
+        "name": "Pause"
+      },
+      "resume": {
+        "name": "Fortsetzen"
       }
     }
   },

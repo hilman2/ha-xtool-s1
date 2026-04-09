@@ -14,6 +14,7 @@ PLATFORMS: tuple[Platform, ...] = (
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.LIGHT,
+    Platform.BUTTON,
 )
 
 

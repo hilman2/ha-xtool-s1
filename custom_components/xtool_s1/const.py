@@ -28,6 +28,19 @@ UPDATE_INTERVAL_SECONDS: Final = 30
 # retry up to 5 minutes for the persistent-app case.
 RECONNECT_BACKOFF_SECONDS: Final = (1.0, 5.0, 15.0, 60.0, 300.0)
 
+# Coexist-mode thresholds. If we observe at least KICK_LIMIT disconnects
+# within KICK_WINDOW seconds, we assume the XCS desktop app is open and
+# switch the coordinator into "coexist" mode where the WebSocket is
+# considered best-effort and HTTP is used as the primary heartbeat.
+COEXIST_KICK_LIMIT: Final = 3
+COEXIST_KICK_WINDOW: Final = 30.0
+COEXIST_HEARTBEAT_INTERVAL: Final = 10.0
+COEXIST_RECOVERY_AFTER: Final = 60.0
+
+# How often to refresh the M2008 lifetime counters (seconds). They only
+# tick once per second on the device side and we don't want to spam.
+STATS_POLL_INTERVAL: Final = 300.0
+
 # Time to wait for the first M2003 reply during config-flow validation.
 CONFIG_FLOW_PROBE_TIMEOUT: Final = 8.0
 
@@ -62,17 +75,36 @@ SENSOR_FIRMWARE_AUX_2: Final = "firmware_aux_2"
 SENSOR_FIRMWARE_TOOL: Final = "firmware_tool"
 SENSOR_SERIAL_NUMBER: Final = "serial_number"
 SENSOR_TOOL_TYPE: Final = "tool_type"
+SENSOR_TOOL_NAME: Final = "tool_name"
+SENSOR_TOOL_POWER: Final = "tool_power"
+SENSOR_TOOL_FIRMWARE: Final = "tool_firmware"
+SENSOR_TOOL_CAPABILITIES: Final = "tool_capabilities"
+SENSOR_TOOL_RUNTIME: Final = "tool_runtime"
+SENSOR_TOOL_OFFSET_X: Final = "tool_offset_x"
+SENSOR_TOOL_OFFSET_Y: Final = "tool_offset_y"
 SENSOR_JOB_FILE: Final = "job_file"
 SENSOR_POSITION_X: Final = "position_x"
 SENSOR_POSITION_Y: Final = "position_y"
+SENSOR_POSITION_Z: Final = "position_z"
 SENSOR_PROBE_Z: Final = "probe_z"
 SENSOR_LIGHT_BRIGHTNESS: Final = "light_brightness"
+SENSOR_WORKING_TIME: Final = "working_time"
+SENSOR_STANDBY_TIME: Final = "standby_time"
+SENSOR_SESSION_COUNT: Final = "session_count"
+SENSOR_LAST_JOB_OUTCOME: Final = "last_job_outcome"
 
 BINARY_SENSOR_RUNNING: Final = "running"
 BINARY_SENSOR_ALARM: Final = "alarm"
 BINARY_SENSOR_CONNECTION: Final = "connection"
+BINARY_SENSOR_PAUSED: Final = "paused"
+BINARY_SENSOR_LAST_JOB_ABORTED: Final = "last_job_aborted"
+BINARY_SENSOR_JOB_ARMED: Final = "job_armed"
 
 LIGHT_FILL_LIGHT: Final = "fill_light"
+
+BUTTON_STOP: Final = "stop"
+BUTTON_PAUSE: Final = "pause"
+BUTTON_RESUME: Final = "resume"
 
 # Status enum values reported via the `status` sensor.
 # These MUST be lowercase, snake_case, and matched 1:1 in
@@ -80,8 +112,12 @@ LIGHT_FILL_LIGHT: Final = "fill_light"
 STATUS_IDLE: Final = "idle"
 STATUS_READY: Final = "ready"
 STATUS_MEASURING: Final = "measuring"
+STATUS_PREPARING: Final = "preparing"
+STATUS_FRAME: Final = "frame"
+STATUS_MOTION: Final = "motion"
 STATUS_STARTING: Final = "starting"
 STATUS_RUNNING: Final = "running"
+STATUS_PAUSED: Final = "paused"
 STATUS_FINISHING: Final = "finishing"
 STATUS_UNKNOWN: Final = "unknown"
 
@@ -89,22 +125,67 @@ STATUS_OPTIONS: Final = (
     STATUS_IDLE,
     STATUS_READY,
     STATUS_MEASURING,
+    STATUS_PREPARING,
+    STATUS_FRAME,
+    STATUS_MOTION,
     STATUS_STARTING,
     STATUS_RUNNING,
+    STATUS_PAUSED,
     STATUS_FINISHING,
     STATUS_UNKNOWN,
 )
 
 # Mapping of S1 work-state codes (from M222) to status enum values.
-# Source: BassXT/xtool#23 work-state observations.
+# Verified live against hilman2's device 2026-04-08/09.
 WORK_STATE_MAP: Final[dict[str, str]] = {
     "S1": STATUS_READY,
     "S3": STATUS_IDLE,
     "S10": STATUS_MEASURING,
+    "S11": STATUS_FRAME,
+    "S12": STATUS_MOTION,
     "S13": STATUS_STARTING,
     "S14": STATUS_RUNNING,
+    "S15": STATUS_PAUSED,
+    "S18": STATUS_PREPARING,
     "S19": STATUS_FINISHING,
 }
 
 # Work-state codes that count as "the laser is actively running a job".
-RUNNING_WORK_STATES: Final = frozenset({"S13", "S14", "S19"})
+RUNNING_WORK_STATES: Final = frozenset({"S13", "S14", "S15", "S19"})
+
+# Last-job-outcome enum values exposed via sensor.last_job_outcome.
+OUTCOME_IDLE: Final = "idle"
+OUTCOME_RUNNING: Final = "running"
+OUTCOME_PAUSED: Final = "paused"
+OUTCOME_COMPLETED: Final = "completed"
+OUTCOME_ABORTED: Final = "aborted"
+
+OUTCOME_OPTIONS: Final = (
+    OUTCOME_IDLE,
+    OUTCOME_RUNNING,
+    OUTCOME_PAUSED,
+    OUTCOME_COMPLETED,
+    OUTCOME_ABORTED,
+)
+
+# --- Device commands -------------------------------------------------------
+# These are the M-codes we send via POST /cmd as job-control actions.
+# Verified against hilman2's device on 2026-04-09.
+MCODE_STOP: Final = "M108"
+
+# Pause / Resume triggers — provisional. The Stop trigger (M108) is
+# verified, but we have not yet captured the bytes the XCS desktop app
+# sends for Pause and Resume in the App→Laser direction. The values
+# below are educated guesses based on the M22 push patterns the
+# server emits *after* the action — they will be replaced once the
+# real triggers are isolated. Until then, the buttons should be
+# considered placeholders.
+MCODE_PAUSE_PLACEHOLDER: Final = "M22 S1"
+MCODE_RESUME_PLACEHOLDER: Final = "M22 S2"
+
+# Tool-firmware fingerprint -> human-readable tool name lookup.
+# Populated by observation; expand as new tool variants are tested.
+TOOL_FIRMWARE_NAMES: Final[dict[str, str]] = {
+    "V40.32.009.2122.01 B1": "Diode 40 W",
+    "V40.32.008.2122.01 B3": "Infrared 2 W",
+}

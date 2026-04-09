@@ -68,10 +68,24 @@
           "idle": "Idle",
           "ready": "Ready",
           "measuring": "Measuring",
+          "preparing": "Preparing",
+          "frame": "Frame run",
+          "motion": "Motion",
           "starting": "Starting",
           "running": "Running",
+          "paused": "Paused",
           "finishing": "Finishing",
           "unknown": "Unknown"
+        }
+      },
+      "last_job_outcome": {
+        "name": "Last job outcome",
+        "state": {
+          "idle": "Idle",
+          "running": "Running",
+          "paused": "Paused",
+          "completed": "Completed",
+          "aborted": "Aborted"
         }
       },
       "firmware_version": {
@@ -92,6 +106,36 @@
       "tool_type": {
         "name": "Tool type"
       },
+      "tool_name": {
+        "name": "Installed tool"
+      },
+      "tool_power": {
+        "name": "Tool power"
+      },
+      "tool_firmware": {
+        "name": "Tool firmware identifier"
+      },
+      "tool_capabilities": {
+        "name": "Tool capabilities"
+      },
+      "tool_runtime": {
+        "name": "Tool runtime"
+      },
+      "tool_offset_x": {
+        "name": "Tool offset X"
+      },
+      "tool_offset_y": {
+        "name": "Tool offset Y"
+      },
+      "working_time": {
+        "name": "Working time"
+      },
+      "standby_time": {
+        "name": "Standby time"
+      },
+      "session_count": {
+        "name": "Session count"
+      },
       "job_file": {
         "name": "Job file"
       },
@@ -100,6 +144,9 @@
       },
       "position_y": {
         "name": "Position Y"
+      },
+      "position_z": {
+        "name": "Position Z"
       },
       "probe_z": {
         "name": "Probe Z"
@@ -112,6 +159,15 @@
       "running": {
         "name": "Running"
       },
+      "paused": {
+        "name": "Paused"
+      },
+      "last_job_aborted": {
+        "name": "Last job aborted"
+      },
+      "job_armed": {
+        "name": "Job armed"
+      },
       "alarm": {
         "name": "Alarm"
       },
@@ -122,6 +178,17 @@
     "light": {
       "fill_light": {
         "name": "Fill light"
+      }
+    },
+    "button": {
+      "stop": {
+        "name": "Stop"
+      },
+      "pause": {
+        "name": "Pause"
+      },
+      "resume": {
+        "name": "Resume"
       }
     }
   },

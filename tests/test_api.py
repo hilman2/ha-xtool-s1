@@ -18,7 +18,10 @@ from custom_components.xtool_s1.api import (
     _normalise_alarm,
     _parse_m13_payload,
     _parse_m27_payload,
+    _parse_m98_payload,
     _parse_m105_payload,
+    _parse_m116_payload,
+    _parse_m2008_payload,
     discover_devices,
     discover_via_udp,
     parse_network,
@@ -91,6 +94,59 @@ class TestParserHelpers:
     def test_normalise_alarm(self, raw: str, expected_present: bool) -> None:
         _, present = _normalise_alarm(raw)
         assert present is expected_present
+
+    def test_parse_m116_diode_40w(self) -> None:
+        """The diode 40 W head reports Y40 in the capability bitmap."""
+        result = _parse_m116_payload("X0Y40B1P1L2")
+        assert result["tool_capabilities_raw"] == "X0Y40B1P1L2"
+        assert result["tool_power_w"] == 40
+
+    def test_parse_m116_infrared_2w(self) -> None:
+        """The 2 W IR head reports Y2."""
+        result = _parse_m116_payload("X1Y2B0P0L0")
+        assert result["tool_power_w"] == 2
+
+    def test_parse_m116_no_y_field(self) -> None:
+        """A payload without a Y field still surfaces the raw string."""
+        result = _parse_m116_payload("X0B1")
+        assert result["tool_capabilities_raw"] == "X0B1"
+        assert "tool_power_w" not in result
+
+    def test_parse_m116_empty(self) -> None:
+        """An empty payload yields a None raw string."""
+        result = _parse_m116_payload("")
+        assert result == {"tool_capabilities_raw": None}
+
+    def test_parse_m98_full(self) -> None:
+        result = _parse_m98_payload("X0.32 Y25.88")
+        assert result == {"tool_offset_x": 0.32, "tool_offset_y": 25.88}
+
+    def test_parse_m98_signed(self) -> None:
+        result = _parse_m98_payload("X-1.5 Y+2.0")
+        assert result == {"tool_offset_x": -1.5, "tool_offset_y": 2.0}
+
+    def test_parse_m98_only_x(self) -> None:
+        assert _parse_m98_payload("X0.50") == {"tool_offset_x": 0.5}
+
+    def test_parse_m98_empty(self) -> None:
+        assert _parse_m98_payload("") == {}
+
+    def test_parse_m2008_full(self) -> None:
+        """Full M2008 lifetime counters."""
+        result = _parse_m2008_payload("A151484 B219 C1263671 D3004")
+        assert result == {
+            "working_seconds": 151484,
+            "session_count": 219,
+            "standby_seconds": 1263671,
+            "tool_runtime_seconds": 3004,
+        }
+
+    def test_parse_m2008_partial(self) -> None:
+        """A partial payload only sets the present fields."""
+        assert _parse_m2008_payload("A100") == {"working_seconds": 100}
+
+    def test_parse_m2008_empty(self) -> None:
+        assert _parse_m2008_payload("") == {}
 
 
 # --- frame-handling tests against the in-process FakeS1Server ---------------
@@ -308,6 +364,110 @@ async def test_push_frames_update_state(fake_s1_server, hass) -> None:
     assert state.probe_z == -0.125
     assert state.pos_x == 10.5
     assert state.pos_y == 20.5
+
+
+@pytest.mark.asyncio
+async def test_push_frames_m2008_m22_m323_m116_m98(fake_s1_server, hass) -> None:
+    """The new push branches each map onto their state fields."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await fake_s1_server.push("M2008 A12345 B6 C9876 D54")
+        await fake_s1_server.push("M22 S1")
+        await fake_s1_server.push("M323 OK")
+        await fake_s1_server.push("M323 OK")
+        await fake_s1_server.push("M116 X0Y40B1P1L2")
+        await fake_s1_server.push("M98 X0.32 Y25.88")
+        await asyncio.sleep(0.2)
+    finally:
+        await client.disconnect()
+    state = client.state
+    assert state.working_seconds == 12345
+    assert state.session_count == 6
+    assert state.standby_seconds == 9876
+    assert state.tool_runtime_seconds == 54
+    assert state.m22_state == "S1"
+    assert state.m323_ack_count == 2
+    assert state.tool_capabilities_raw == "X0Y40B1P1L2"
+    assert state.tool_power_w == 40
+    assert state.tool_offset_x == 0.32
+    assert state.tool_offset_y == 25.88
+
+
+@pytest.mark.asyncio
+async def test_push_m22_empty_payload_ignored(fake_s1_server, hass) -> None:
+    """An ``M22`` push with no payload should not change the state."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await fake_s1_server.push("M22 ")
+        await asyncio.sleep(0.1)
+    finally:
+        await client.disconnect()
+    assert client.state.m22_state is None
+
+
+@pytest.mark.asyncio
+async def test_push_m323_non_ok_payload_ignored(fake_s1_server, hass) -> None:
+    """A ``M323`` push that isn't ``OK`` must not bump the counter."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await fake_s1_server.push("M323 BUSY")
+        await asyncio.sleep(0.1)
+    finally:
+        await client.disconnect()
+    assert client.state.m323_ack_count == 0
+
+
+@pytest.mark.asyncio
+async def test_m2003_snapshot_includes_m116_m98(hass) -> None:
+    """M116 and M98 fields in an M2003 snapshot land on the state."""
+    snapshot = load_fixture("m2003_idle.json")
+    snapshot["M116"] = "X0Y40B1P1L2"
+    snapshot["M98"] = "X0.32 Y25.88"
+    client = XToolS1Client("127.0.0.1", session=None)  # type: ignore[arg-type]
+    updates = client._parse_m2003_snapshot(json.dumps(snapshot))
+    assert updates["tool_capabilities_raw"] == "X0Y40B1P1L2"
+    assert updates["tool_power_w"] == 40
+    assert updates["tool_offset_x"] == 0.32
+    assert updates["tool_offset_y"] == 25.88
+
+
+@pytest.mark.asyncio
+async def test_stop_pause_resume_request_stats_use_http(fake_s1_server, hass) -> None:
+    """Job-control + stats-poll commands all go through POST /cmd."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    from custom_components.xtool_s1.const import (
+        MCODE_PAUSE_PLACEHOLDER,
+        MCODE_RESUME_PLACEHOLDER,
+    )
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(
+        fake_s1_server.host,
+        session,
+        port=fake_s1_server.port,
+        http_port=fake_s1_server.http_port,
+    )
+    await client.stop_job()
+    await client.pause_job()
+    await client.resume_job()
+    await client.request_stats()
+    assert "M108" in fake_s1_server.http_received
+    assert MCODE_PAUSE_PLACEHOLDER in fake_s1_server.http_received
+    assert MCODE_RESUME_PLACEHOLDER in fake_s1_server.http_received
+    assert "M2008" in fake_s1_server.http_received
 
 
 @pytest.mark.asyncio

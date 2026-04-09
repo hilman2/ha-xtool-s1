@@ -7,10 +7,24 @@
           "idle": "mdi:sleep",
           "ready": "mdi:check-circle-outline",
           "measuring": "mdi:ruler",
+          "preparing": "mdi:cog-sync-outline",
+          "frame": "mdi:vector-rectangle",
+          "motion": "mdi:cursor-move",
           "starting": "mdi:play-circle-outline",
           "running": "mdi:laser-pointer",
+          "paused": "mdi:pause-circle-outline",
           "finishing": "mdi:flag-checkered",
           "unknown": "mdi:help-circle-outline"
+        }
+      },
+      "last_job_outcome": {
+        "default": "mdi:history",
+        "state": {
+          "idle": "mdi:sleep",
+          "running": "mdi:laser-pointer",
+          "paused": "mdi:pause-circle-outline",
+          "completed": "mdi:check-circle",
+          "aborted": "mdi:close-octagon"
         }
       },
       "firmware_version": {
@@ -31,6 +45,36 @@
       "tool_type": {
         "default": "mdi:tools"
       },
+      "tool_name": {
+        "default": "mdi:tools"
+      },
+      "tool_power": {
+        "default": "mdi:flash"
+      },
+      "tool_firmware": {
+        "default": "mdi:chip"
+      },
+      "tool_capabilities": {
+        "default": "mdi:tag-multiple-outline"
+      },
+      "tool_runtime": {
+        "default": "mdi:clock-outline"
+      },
+      "tool_offset_x": {
+        "default": "mdi:axis-x-arrow"
+      },
+      "tool_offset_y": {
+        "default": "mdi:axis-y-arrow"
+      },
+      "working_time": {
+        "default": "mdi:timer-outline"
+      },
+      "standby_time": {
+        "default": "mdi:sleep"
+      },
+      "session_count": {
+        "default": "mdi:counter"
+      },
       "job_file": {
         "default": "mdi:file-outline"
       },
@@ -39,6 +83,9 @@
       },
       "position_y": {
         "default": "mdi:axis-y-arrow"
+      },
+      "position_z": {
+        "default": "mdi:axis-z-arrow"
       },
       "probe_z": {
         "default": "mdi:axis-z-arrow"
@@ -51,6 +98,15 @@
       "running": {
         "default": "mdi:laser-pointer"
       },
+      "paused": {
+        "default": "mdi:pause-circle-outline"
+      },
+      "last_job_aborted": {
+        "default": "mdi:close-octagon-outline"
+      },
+      "job_armed": {
+        "default": "mdi:gesture-tap-button"
+      },
       "alarm": {
         "default": "mdi:alert-octagon"
       },
@@ -61,6 +117,17 @@
     "light": {
       "fill_light": {
         "default": "mdi:lightbulb-on-outline"
+      }
+    },
+    "button": {
+      "stop": {
+        "default": "mdi:stop-circle-outline"
+      },
+      "pause": {
+        "default": "mdi:pause-circle-outline"
+      },
+      "resume": {
+        "default": "mdi:play-circle-outline"
       }
     }
   }

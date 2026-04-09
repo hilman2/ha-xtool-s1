@@ -1,0 +1,105 @@
+"""Button platform for the xTool S1 — job-control actions over HTTP.
+
+All three buttons go through the HTTP ``POST /cmd`` gateway so they
+keep working even when the XCS desktop app is hammering the
+WebSocket. They are intentionally **HTTP-only entities** that
+inherit from :class:`XToolS1HttpEntity` and stay available as long
+as the device's HTTP gateway answers.
+
+Status (verified against hilman2's S1 on 2026-04-09):
+
+* **Stop** — `M108`. Verified live: the device acks with `M108 ok`
+  and runs the shutdown state machine (S18 → S1 → S3, with M22
+  sticky at S1 as the abnormal-finish marker).
+* **Pause** — placeholder. The exact M-code the XCS app sends has
+  not yet been isolated from a packet capture; the placeholder
+  ``M22 S1`` is an educated guess based on the *response* state
+  machine. Will be replaced once the real trigger is captured.
+* **Resume** — same caveat as Pause. Placeholder ``M22 S2``. The
+  device may also require a physical button press to actually
+  resume, similar to the start safety lock.
+
+The two placeholder buttons stay in the integration with their
+provisional payloads so users can wire automations against them
+today; once we ship the real M-codes, only the constants in
+``const.py`` change and existing automations keep working.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+
+from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+from .api import XToolS1Client, XToolS1ConnectionError
+from .const import BUTTON_PAUSE, BUTTON_RESUME, BUTTON_STOP
+from .coordinator import XToolS1ConfigEntry
+from .entity import XToolS1HttpEntity
+
+PARALLEL_UPDATES = 1
+
+
+@dataclass(frozen=True, kw_only=True)
+class XToolS1ButtonDescription(ButtonEntityDescription):
+    """Describes an xTool S1 button."""
+
+    press_fn: Callable[[XToolS1Client], Awaitable[None]]
+
+
+BUTTON_DESCRIPTIONS: tuple[XToolS1ButtonDescription, ...] = (
+    XToolS1ButtonDescription(
+        key=BUTTON_STOP,
+        translation_key=BUTTON_STOP,
+        press_fn=lambda client: client.stop_job(),
+    ),
+    XToolS1ButtonDescription(
+        key=BUTTON_PAUSE,
+        translation_key=BUTTON_PAUSE,
+        press_fn=lambda client: client.pause_job(),
+    ),
+    XToolS1ButtonDescription(
+        key=BUTTON_RESUME,
+        translation_key=BUTTON_RESUME,
+        press_fn=lambda client: client.resume_job(),
+    ),
+)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: XToolS1ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Set up the xTool S1 control buttons from a config entry."""
+    coordinator = entry.runtime_data.coordinator
+    async_add_entities(
+        XToolS1Button(coordinator, description) for description in BUTTON_DESCRIPTIONS
+    )
+
+
+class XToolS1Button(XToolS1HttpEntity, ButtonEntity):
+    """A single HTTP-routed control button (stop/pause/resume)."""
+
+    entity_description: XToolS1ButtonDescription
+
+    def __init__(
+        self,
+        coordinator,
+        description: XToolS1ButtonDescription,
+    ) -> None:
+        self._attr_translation_key = description.translation_key or description.key
+        super().__init__(coordinator)
+        self.entity_description = description
+
+    async def async_press(self) -> None:
+        """Send the button's M-code via the HTTP gateway."""
+        try:
+            await self.entity_description.press_fn(self.coordinator.client)
+        except XToolS1ConnectionError as err:
+            raise HomeAssistantError(
+                f"Failed to send {self.entity_description.key} command: {err}"
+            ) from err

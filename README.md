@@ -20,32 +20,64 @@ from day one.
 
 ## Status
 
-**v1.0** — S1 core only, with the HTTP/UDP layers we reverse-engineered
-from scratch (no other public integration uses them).
+**v1.1** — S1 core, plus job-control buttons, lifetime statistics,
+job-state derivation, and a true XCS-app coexistence mode.
+
+What v1.1 adds on top of v1.0:
+- **Stop button** (verified `M108` against the live device).
+- **Pause / Resume buttons** — provisional placeholders. The exact
+  trigger M-codes have not yet been isolated from a packet capture, so
+  these go out as buttons that wire your automations *now*; the
+  payload constants will be swapped out in a follow-up release without
+  breaking anything.
+- **Tool detection** — the integration now identifies the installed
+  laser head from its firmware fingerprint (e.g. *Diode 40 W*,
+  *Infrared 2 W*) and exposes its rated power, capability bitmap and
+  per-tool runtime.
+- **Lifetime statistics** from `M2008` — total working time,
+  standby time, session count, current-tool runtime.
+- **Job lifecycle binary sensors** — `paused`, `last_job_aborted`
+  (sticky abnormal-finish marker), `job_armed` (job preloaded, waiting
+  on the physical Start button).
+- **`last_job_outcome` enum** — single sensor that reports the
+  most recent job's terminal state (running / paused / completed /
+  aborted / idle).
+- **True coexist mode** — instead of just backing off, the coordinator
+  detects an active XCS session (3+ kicks in 30 s) and stops fighting
+  for the WebSocket entirely; HTTP-only entities (light, buttons) keep
+  working seamlessly.
 
 Planned for v2:
 - AP2 air cleaner support (M9039 push frames)
 - Real exhaust-fan / air-assist state — not yet found in any documented
   M-code; needs an active-job packet capture to map. Until then, the
   audible fans on the S1 are not surfaced as sensors.
-- Pause / Resume / Stop buttons — once we know the M-code the XCS app
-  uses for them (also a packet capture / Wireshark task).
+- Verified Pause / Resume M-codes — see above.
 
 ## Coexistence with the XCS app
 
 The S1 firmware has a quirk: while the **xTool Creative Space app** is
 actively talking to the laser, it can kick other clients off the
-WebSocket on port 8081. This integration is designed to coexist:
+WebSocket on port 8081. This integration is designed to coexist by
+running in one of three modes:
 
-- **Writes** (e.g. setting the fill light) go through the HTTP gateway
-  on port 8080, which survives WS kicks. So you can dim the laser
-  light from HA even while the XCS app is open.
-- **Reads** go through the WebSocket. When the app kicks us, the
-  coordinator backs off (1s → 5s → 15s → 1min → 5min) instead of
-  fighting the app for the socket. While in backoff it polls a cheap
-  HTTP heartbeat (`/system?action=mac`) so the entry stays
-  *available* — entities show their last known state until the WS
-  comes back.
+- **Normal** — the WebSocket is healthy, push frames update state in
+  real time.
+- **Coexist** — once we observe 3 kicks within 30 seconds we assume the
+  XCS app is open. The coordinator stops trying to keep the WebSocket
+  alive and instead runs on a cheap HTTP heartbeat
+  (`GET /system?action=mac`). State sensors keep showing their last
+  known values (with a `stale: True` attribute), and any
+  HTTP-routed entity stays fully operational. Once XCS goes quiet
+  again the coordinator opportunistically tries a fresh WS connect
+  and snaps back to *Normal*.
+- **Offline** — the HTTP heartbeat has been failing for too long.
+  Everything goes unavailable until the device comes back.
+
+**Writes** (fill light, Stop / Pause / Resume buttons) all go through
+the HTTP gateway on port 8080, so they survive WS kicks regardless of
+mode. You can dim the light or stop a job from HA even while XCS is
+open and pounding the WebSocket.
 
 ---
 
@@ -73,21 +105,34 @@ WebSocket on port 8081. This integration is designed to coexist:
 
 | Type | Name | Unit | Description |
 |---|---|---|---|
-| sensor | Status | enum | `idle` / `ready` / `measuring` / `starting` / `running` / `finishing` |
-| sensor | Position X | mm | Current X-axis position |
-| sensor | Position Y | mm | Current Y-axis position |
-| sensor | Probe Z | mm | Last Z-probe reading *(diagnostic, off by default)* |
+| sensor | Status | enum | `idle` / `ready` / `measuring` / `preparing` / `frame` / `motion` / `starting` / `running` / `paused` / `finishing` |
+| sensor | Last job outcome | enum | `idle` / `running` / `paused` / `completed` / `aborted` |
+| sensor | Installed tool | — | Human-readable tool name (`Diode 40 W`, `Infrared 2 W`, …) |
+| sensor | Tool power | W | Rated power of the installed laser head |
+| sensor | Tool runtime | h | Working seconds of the *current* tool |
+| sensor | Working time | h | Lifetime working time across all tools |
+| sensor | Standby time | h | Lifetime standby time |
+| sensor | Session count | — | Lifetime number of completed sessions |
+| sensor | Position X / Y / Z | mm | Current head position |
+| sensor | Probe Z | mm | Last Z-probe reading *(diagnostic)* |
 | sensor | Light brightness | % | Internal fill-light brightness |
 | sensor | Job File | — | Currently loaded job filename |
 | sensor | Firmware Version | — | *Diagnostic* |
-| sensor | Serial Number | — | *Diagnostic, off by default* |
-| sensor | Tool Type | — | *Diagnostic* |
-| sensor | Auxiliary firmware 1/2 | — | *Diagnostic, off by default* |
-| sensor | Tool firmware | — | *Diagnostic, off by default* |
+| sensor | Tool type | — | *Diagnostic* — raw `M54` value |
+| sensor | Tool capabilities | — | *Diagnostic, off by default* — raw `M116` bitmap |
+| sensor | Tool offset X / Y | mm | *Diagnostic, off by default* — physical mounting offset |
+| sensor | Serial number | — | *Diagnostic, off by default* |
+| sensor | Auxiliary firmware 1/2, Tool firmware | — | *Diagnostic, off by default* |
 | binary_sensor | Running | `running` | A job is actively executing |
+| binary_sensor | Paused | — | The current job is paused |
+| binary_sensor | Last job aborted | `problem` | The previous job ended via Stop |
+| binary_sensor | Job armed | — | Job preloaded — waiting on the physical Start button |
 | binary_sensor | Alarm | `problem` | Machine reports an alarm condition |
 | binary_sensor | Connection | `connectivity` | WebSocket session is up *(diagnostic)* |
 | **light** | Fill light | brightness | Dimmable interior fill light, controllable from HA |
+| **button** | Stop | — | Abort the running job (verified `M108`) |
+| **button** | Pause | — | Pause the running job (provisional payload) |
+| **button** | Resume | — | Resume a paused job (provisional payload) |
 
 ---
 

@@ -113,3 +113,73 @@ async def test_connection_sensor_on_when_connected(
     entry_ent = registry.async_get("binary_sensor.xtool_s1_connection")
     assert entry_ent is not None
     assert entry_ent.entity_category.value == "diagnostic"
+
+
+def test_paused_is_on_helper() -> None:
+    """The paused helper is True only on M222 == S15."""
+    from custom_components.xtool_s1.api import XToolS1State
+    from custom_components.xtool_s1.binary_sensor import _paused_is_on
+
+    assert _paused_is_on(XToolS1State(work_state_raw="S15")) is True
+    assert _paused_is_on(XToolS1State(work_state_raw="S14")) is False
+    assert _paused_is_on(XToolS1State()) is False
+
+
+def test_last_job_aborted_helper() -> None:
+    """``last_job_aborted`` is sticky after a Stop while idle."""
+    from custom_components.xtool_s1.api import XToolS1State
+    from custom_components.xtool_s1.binary_sensor import _last_job_aborted_is_on
+
+    # Idle + sticky M22 S1 → aborted previously
+    assert (
+        _last_job_aborted_is_on(XToolS1State(work_state_raw="S3", m22_state="S1"))
+        is True
+    )
+    # Idle + clean M22 → no abort marker
+    assert (
+        _last_job_aborted_is_on(XToolS1State(work_state_raw="S3", m22_state="S0"))
+        is False
+    )
+    # Anything other than idle is not the abort condition
+    assert (
+        _last_job_aborted_is_on(XToolS1State(work_state_raw="S14", m22_state="S1"))
+        is False
+    )
+
+
+def test_job_armed_helper() -> None:
+    """``job_armed`` requires S3 + 1 ack + head moved off the park spot."""
+    from custom_components.xtool_s1.api import XToolS1State
+    from custom_components.xtool_s1.binary_sensor import _job_armed_is_on
+
+    # Happy path: job preloaded and head moved
+    armed = XToolS1State(work_state_raw="S3", m323_ack_count=1, pos_x=50.0, pos_y=50.0)
+    assert _job_armed_is_on(armed) is True
+
+    # Wrong state
+    assert (
+        _job_armed_is_on(
+            XToolS1State(work_state_raw="S14", m323_ack_count=1, pos_x=50.0, pos_y=50.0)
+        )
+        is False
+    )
+
+    # No ack yet
+    assert (
+        _job_armed_is_on(
+            XToolS1State(work_state_raw="S3", m323_ack_count=0, pos_x=50.0, pos_y=50.0)
+        )
+        is False
+    )
+
+    # Head still parked at the home position
+    parked = XToolS1State(work_state_raw="S3", m323_ack_count=1, pos_x=0.0, pos_y=99.8)
+    assert _job_armed_is_on(parked) is False
+
+    # Position not yet known
+    assert (
+        _job_armed_is_on(
+            XToolS1State(work_state_raw="S3", m323_ack_count=1, pos_x=None, pos_y=None)
+        )
+        is False
+    )
