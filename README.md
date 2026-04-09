@@ -129,13 +129,13 @@ as you want from your phone. No computer needed after the initial setup.
 
 1. Design and run your job in XCS as usual
 2. Open the **xTool S1 Jobs** card in your HA dashboard
-3. Tap **Job speichern**
+3. Tap **Save job**
 4. Fill in the form:
    - **Title**: a short name (e.g. "Phone stand cutout")
    - **Description**: notes for your future self (e.g. "Birch 3 mm, vector cut")
    - **Material**: the material you used (e.g. "Birch plywood")
    - **Thickness**: material thickness in mm
-5. Tap **Speichern**
+5. Tap **Save**
 
 The integration downloads the gcode directly from the laser's SD card and
 stores it together with the metadata you entered. The currently installed
@@ -144,11 +144,11 @@ laser module (e.g. *Diode 40 W*) is detected and saved automatically.
 ### Starting a saved job
 
 1. Open the **xTool S1 Jobs** card
-2. Find the job in the list and tap **Starten**
+2. Find the job in the list and tap **Start**
 3. A confirmation dialog appears showing material, thickness and laser
    module. Verify that the correct material is loaded and the right laser
    head is installed.
-4. Tap **Bestatigen & Starten**
+4. Tap **Confirm & Start**
 5. The integration uploads the gcode to the laser and triggers the start
    sequence
 6. **Press the physical Start button on the device** to begin
@@ -163,7 +163,7 @@ Cutting 20 identical phone stands from plywood:
 
 1. Design the cut in XCS, run it once, save it in HA
 2. Remove the finished piece, load new material
-3. On your phone: tap **Starten** on the saved job, confirm, press the
+3. On your phone: tap **Start** on the saved job, confirm, press the
    button on the laser
 4. Repeat steps 2-3 for all 20 pieces
 
