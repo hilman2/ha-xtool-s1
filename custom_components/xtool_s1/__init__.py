@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -43,19 +44,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: XToolS1ConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_register_services(hass)
-    _register_card(hass)
+    await _register_card(hass)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
 
-def _register_card(hass: HomeAssistant) -> None:  # pragma: no cover
+async def _register_card(hass: HomeAssistant) -> None:  # pragma: no cover
     """Serve the Lovelace card JS from /xtool_s1/."""
     if hass.http is None:
         return
-    hass.http.register_static_path(
-        "/xtool_s1",
-        str(Path(__file__).parent / "www"),
-        cache_headers=False,
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig("/xtool_s1", str(Path(__file__).parent / "www"), False)]
     )
 
 
