@@ -14,11 +14,8 @@ Status (verified against hilman2's S1 on 2026-04-09):
 * **Pause** — `M22 S1`. Verified from the same Wireshark capture:
   the device echoes ``M22 S1``, transitions ``M222`` to S15 and
   dims the fill light to ``M15 A1 S0``.
-* **Resume** — best-effort. The S1 firmware does **not** accept a
-  network resume request — the user must press the physical Start
-  button on the device. The button is kept as a documentation /
-  automation entity and sends ``M22 S2`` in case a future firmware
-  starts honouring it; expect it to be a no-op until then.
+* **Resume** — `M22 S2`. Verified: the device resumes immediately
+  without requiring a physical button press.
 """
 
 from __future__ import annotations

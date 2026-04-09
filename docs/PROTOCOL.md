@@ -166,17 +166,84 @@ Access-Control-Allow-Origin: *
 - **Content-Type is `text/plain`**, NOT multipart/form-data. The
   body is the raw Gcode file as a string.
 - **No authentication.** Same as everything else on this device.
-- The upload **does not start the job** — it only stages it. The user
-  still has to press Start in the app, then the safety button on the
-  device (see §6.0d). After upload, sending a yet-unidentified
-  `start` command (or just clicking Start in XCS, which we know
-  drives `M323 OK`) is what kicks off `M222 S13`.
+- The upload **does not start the job** — it only stages it on the
+  SD card as `tmp.gcode`. Starting requires the WebSocket sequence
+  described in §3.3 below, plus a physical button press.
 
 **Implication**: HA can upload arbitrary jobs to the S1 by
-constructing a Gcode body and POSTing it. The hardware safety lock
-still applies — no remote-start is possible — but features like
-"frame preview from HA", "park-and-home" buttons, or
-"upload-this-saved-job" become feasible.
+constructing a Gcode body and POSTing it, then trigger the start
+sequence. The hardware safety lock still applies — the user must
+press the physical Start button on the device — but the entire
+workflow (upload + prepare + trigger) works without XCS, enabling
+batch operations from a phone.
+
+### 3.3 Remote job start (verified 2026-04-09)
+
+**Full sequence to start a job without XCS**, verified live against
+hilman2's S1. The start commands MUST go through the **WebSocket**
+on port 8081 — sending them via HTTP `POST /cmd` has no effect.
+
+```
+1. POST /upload?taskId=<UUID>&filename=tmp.gcode   (HTTP, stages file)
+2. WS: M322 S1   → M322 R0      (switch SD card to ESP32 read mode)
+3. WS: M330 S0   → M330 S0      (ack, purpose unclear)
+4. WS: M323 S1   → M323 OK      (arm the start — device waits for button)
+5. WS: M323 S1                   (second trigger, timing aid)
+6. [User presses physical Start button on device]
+7.                → M222 S13     (state → Starting)
+8.                → M222 S14     (state → Running)
+```
+
+**Key findings**:
+- Steps 2–5 do **nothing** when sent via HTTP `/cmd` — they are
+  silently accepted but the device ignores them. WebSocket only.
+- The physical button press is **mandatory** — the firmware will not
+  fire the laser without it. This is a safety feature, not a bug.
+- Step 5 (second `M323 S1`) is not strictly required but was present
+  in the XCS app's captured sequence. Without it, the device still
+  waits for the button; with it, the timing is smoother.
+- To **re-run the same job**, skip step 1 (the file is already on
+  the SD card) and send steps 2–5 again. This is the "repeat last
+  job" use case for batch work.
+- `GET /gcode/` lists the SD card contents. `GET /gcode/tmp.gcode`
+  downloads the current job file. Files persist across reboots.
+
+### 3.4 SD card file server
+
+The HTTP gateway exposes the laser's SD card at `/gcode/`:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/gcode/` | HTML directory listing |
+| `GET` | `/gcode/tmp.gcode` | Download last job |
+| `GET` | `/gcode/frame.gcode` | Download last frame-run |
+| `GET` | `/gcode/logs.txt` | Firmware debug log (~70k lines) |
+| `POST` | `/upload?filename=<name>` | Upload a file (max 2 GB) |
+
+The `logs.txt` file contains hardware-level debug output including
+lifetime counters (see §7.1), homing sequences, cover sensor events,
+and M-code dispatch traces. Not available while a job is running
+(SD card busy).
+
+### 3.5 Lifetime counters from logs.txt
+
+The firmware periodically writes accumulated statistics to `logs.txt`:
+
+```
+acc_worktime:151566;              # M2008.A — total working seconds
+acc_workcount:228;                # M2008.B — number of job starts
+acc_sys_runtime:1293589;          # M2008.C — total standby seconds
+acc_2w_laserworktime:880;         # per-tool: 2 W IR head
+acc_default_laserworktime:0;
+acc_10w_laserworktime:0;
+acc_20w_laserworktime:0;
+acc_40w_laserworktime:3086;       # per-tool: 40 W diode ← M2008.D
+```
+
+This confirms M2008.D = accumulated working seconds of the **currently
+installed tool type** (per-wattage counter). The firmware stores
+separate counters for each laser wattage class. All counters are
+persistent across reboots.
 
 ### 3.2 Gcode body format
 
@@ -696,9 +763,10 @@ The architecture has to handle this with the Coexist mode in §9.
 
 #### What's still NOT in this capture
 
-- **Pause / Resume triggers** — hilman2 only triggered Stop in this
-  session. Pause/Resume not yet isolated; expected to be `M22 S1` /
-  `M22 S2` based on earlier observations, but unverified.
+- ~~**Pause / Resume triggers**~~ **VERIFIED 2026-04-09**: Pause is
+  `M22 S1` (App→Laser), Resume is `M22 S2`. Both work over HTTP
+  `POST /cmd`. Resume also works without the physical button — the
+  laser resumes immediately on receiving `M22 S2`.
 - **The Z-probe trigger** — same situation; not in this capture.
 
 ### 5.5e Captured during a real job start + STOP (2026-04-09)
@@ -1006,9 +1074,9 @@ M222 S14               ← Running
    automation trigger — e.g. "send a phone notification 'job armed
    on the S1, press the start button to begin'" when you've
    prepared a job from another room.
-3. Pause / Resume / Stop are different — those work mid-run and
-   don't trigger the same safety lock. So we can safely build
-   `button.pause / resume / stop` once we know the trigger M-codes.
+3. Pause (`M22 S1`) / Resume (`M22 S2`) / Stop (`M108`) work mid-run
+   over HTTP without the safety lock. All three are implemented as
+   buttons in the HA integration since v1.1.0.
 
 The "job armed" detection logic:
 
@@ -1181,10 +1249,11 @@ M2003{...JSON snapshot...}
 
 In rough priority order:
 
-1. **Pause / Resume trigger M-codes** (App→Laser direction) — Stop is
-   now known to be `M108` (verified §5.5h). Pause and Resume still
-   need an isolated capture with the WebSocket decoder enabled.
-   Strong hypothesis: `M22 S1` (pause) and `M22 S2` (resume) — easy
+1. ~~**Pause / Resume trigger M-codes**~~ **DONE**: Pause = `M22 S1`,
+   Resume = `M22 S2`. Both verified 2026-04-09 — work over HTTP, no
+   hardware button needed. Resume was initially thought to require a
+   physical press, but live testing proved it works purely over the
+   network. All three buttons (Stop/Pause/Resume) shipped in v1.1.0.
    to test with one more Wireshark session that pauses+resumes
    instead of stopping.
 2. **The Z-probe trigger** — same situation, what M-code does the app

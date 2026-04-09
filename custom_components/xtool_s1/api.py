@@ -71,7 +71,7 @@ from .const import (
     CONFIG_FLOW_PROBE_TIMEOUT,
     HTTP_PORT,
     MCODE_PAUSE,
-    MCODE_RESUME_BEST_EFFORT,
+    MCODE_RESUME,
     SCAN_MAX_HOSTS,
     UDP_DISCOVERY_BROADCAST_ADDR,
     UDP_DISCOVERY_PORT,
@@ -532,20 +532,14 @@ class XToolS1Client:
         await self.send_command_http(MCODE_PAUSE)
 
     async def resume_job(self) -> None:
-        """Resume a paused job (best-effort, hardware button preferred).
+        """Resume a paused job.
 
-        The S1 firmware does **not** accept a network resume request:
-        a Wireshark capture on 2026-04-09 showed the user had to press
-        the physical Start button on the device for the laser to
-        transition out of S15. Once they did, the laser pushed
-        ``M222 S14`` followed by ``M22 S2`` to all connected clients
-        — but no App→Laser command was sent.
-
-        This method nonetheless sends ``M22 S2`` as a best-effort
-        signal in case a future firmware accepts it. Today it is
-        effectively a no-op without a physical press.
+        Verified live against hilman2's S1 on 2026-04-09: sending
+        ``M22 S2`` via HTTP ``POST /cmd`` resumes the job immediately
+        without requiring a physical button press. The device
+        transitions ``M222`` from S15 back to S14 (Running).
         """
-        await self.send_command_http(MCODE_RESUME_BEST_EFFORT)
+        await self.send_command_http(MCODE_RESUME)
 
     async def request_stats(self) -> None:
         """Request a fresh M2008 lifetime-counter push.

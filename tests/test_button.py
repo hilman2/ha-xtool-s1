@@ -17,7 +17,7 @@ from custom_components.xtool_s1.const import (
     BUTTON_STOP,
     DOMAIN,
     MCODE_PAUSE,
-    MCODE_RESUME_BEST_EFFORT,
+    MCODE_RESUME,
 )
 
 from .conftest import patch_ports
@@ -110,9 +110,9 @@ async def test_resume_button_press_sends_best_effort_m22_s2(
             blocking=True,
         )
         match = await fake_s1_server.wait_for_http_received(
-            lambda line: line == MCODE_RESUME_BEST_EFFORT, timeout=1.0
+            lambda line: line == MCODE_RESUME, timeout=1.0
         )
-        assert match == MCODE_RESUME_BEST_EFFORT
+        assert match == MCODE_RESUME
 
 
 @pytest.mark.asyncio

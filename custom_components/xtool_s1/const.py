@@ -175,15 +175,11 @@ OUTCOME_OPTIONS: Final = (
 #   Stop  -> M108     (verified — device acks "M108 ok")
 #   Pause -> M22 S1   (verified — device echoes M22 S1 + transitions
 #                      M222 to S15 + dims fill light to A1 S0)
-#   Resume -> hardware button on the device (NOT a network command).
-#             The S1 firmware does not accept a network resume request;
-#             the user must press the physical Start button on the
-#             device. The integration still exposes a Resume button
-#             that sends M22 S2 as a best-effort signal, but expect it
-#             to be a no-op without a physical press.
+#   Resume -> M22 S2   (verified — device resumes immediately, no
+#                      physical button press required)
 MCODE_STOP: Final = "M108"
 MCODE_PAUSE: Final = "M22 S1"
-MCODE_RESUME_BEST_EFFORT: Final = "M22 S2"
+MCODE_RESUME: Final = "M22 S2"
 
 # Tool-firmware fingerprint -> human-readable tool name lookup.
 # Populated by observation; expand as new tool variants are tested.
