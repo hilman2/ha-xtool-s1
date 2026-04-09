@@ -1,136 +1,30 @@
 # xTool S1 — Home Assistant Integration
 
 [![CI](https://github.com/hilman2/ha-xtool-s1/actions/workflows/ci.yml/badge.svg)](https://github.com/hilman2/ha-xtool-s1/actions/workflows/ci.yml)
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/)
+[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/)
 [![Quality Scale](https://img.shields.io/badge/Quality%20Scale-Gold-FFD700.svg)](https://developers.home-assistant.io/docs/core/integration-quality-scale/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#tests)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#development)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-A clean, focused [Home Assistant](https://www.home-assistant.io/) custom
-integration for the **xTool S1** laser engraver. Built to the
-[HA Quality Scale **Gold**](https://developers.home-assistant.io/docs/core/integration-quality-scale/)
-from day one.
+A [Home Assistant](https://www.home-assistant.io/) custom integration for the
+**xTool S1** laser engraver. Control your laser, monitor jobs in real time,
+and manage saved jobs — all from your phone, no XCS desktop app required.
 
-> This integration is an independent community project and is **not affiliated
-> with xTool**. Use at your own risk — running a laser is your responsibility.
-
----
-
-## Status
-
-**v1.1** — S1 core, plus job-control buttons, lifetime statistics,
-job-state derivation, and a true XCS-app coexistence mode.
-
-What v1.1 adds on top of v1.0:
-- **Stop button** (verified `M108` against the live device).
-- **Pause button** (verified `M22 S1` from a Wireshark capture).
-- **Resume button** (verified `M22 S2` — resumes immediately, no
-  physical button press required).
-- **Tool detection** — the integration now identifies the installed
-  laser head from its firmware fingerprint (e.g. *Diode 40 W*,
-  *Infrared 2 W*) and exposes its rated power, capability bitmap and
-  per-tool runtime.
-- **Lifetime statistics** from `M2008` — total working time,
-  standby time, session count, current-tool runtime.
-- **Job lifecycle binary sensors** — `paused`, `last_job_aborted`
-  (sticky abnormal-finish marker), `job_armed` (job preloaded, waiting
-  on the physical Start button).
-- **`last_job_outcome` enum** — single sensor that reports the
-  most recent job's terminal state (running / paused / completed /
-  aborted / idle).
-- **True coexist mode** — instead of just backing off, the coordinator
-  detects an active XCS session (3+ kicks in 30 s) and stops fighting
-  for the WebSocket entirely; HTTP-only entities (light, buttons) keep
-  working seamlessly.
-
-Planned for v2:
-- AP2 air cleaner support (M9039 push frames)
-- Real exhaust-fan / air-assist state — not yet found in any documented
-  M-code; needs an active-job packet capture to map. Until then, the
-  audible fans on the S1 are not surfaced as sensors.
-- Verified Pause / Resume M-codes — see above.
-
-## Coexistence with the XCS app
-
-The S1 firmware has a quirk: while the **xTool Creative Space app** is
-actively talking to the laser, it can kick other clients off the
-WebSocket on port 8081. This integration is designed to coexist by
-running in one of three modes:
-
-- **Normal** — the WebSocket is healthy, push frames update state in
-  real time.
-- **Coexist** — once we observe 3 kicks within 30 seconds we assume the
-  XCS app is open. The coordinator stops trying to keep the WebSocket
-  alive and instead runs on a cheap HTTP heartbeat
-  (`GET /system?action=mac`). State sensors keep showing their last
-  known values (with a `stale: True` attribute), and any
-  HTTP-routed entity stays fully operational. Once XCS goes quiet
-  again the coordinator opportunistically tries a fresh WS connect
-  and snaps back to *Normal*.
-- **Offline** — the HTTP heartbeat has been failing for too long.
-  Everything goes unavailable until the device comes back.
-
-**Writes** (fill light, Stop / Pause / Resume buttons) all go through
-the HTTP gateway on port 8080, so they survive WS kicks regardless of
-mode. You can dim the light or stop a job from HA even while XCS is
-open and pounding the WebSocket.
+> **Disclaimer** — This is an independent community project and is **not
+> affiliated with xTool**. Operating a laser cutter is inherently dangerous.
+> Use at your own risk.
 
 ---
 
-## Features
+## Highlights
 
-- Native config flow — no YAML
-- **UDP-broadcast discovery** on port 20000 — finds the S1 on the LAN
-  in a single packet, no IP scan
-- **Push-based** WebSocket connection on port 8081 — state updates
-  arrive in real time
-- **HTTP write path** on port 8080 (`POST /cmd`) — write commands
-  survive concurrent xTool Creative Space app activity, which
-  otherwise kicks the WebSocket
-- **Exponential reconnect backoff** (1s → 5s → 15s → 1min → 5min) —
-  the integration doesn't fight the app for the WebSocket
-- **HTTP heartbeat fallback** — while the WS is being kicked the
-  integration stays *available* by polling `GET /system?action=mac`
-- Reconfigure flow with serial-number guard for DHCP-shifted devices
-- Diagnostic export with the host IP and serial redacted
-- English + German UI translations, icon translations, exception translations
-- 100 % unit-test coverage on the integration code
-- Black + Ruff lint, hassfest + HACS validation in CI
-
-### Entities (per device)
-
-| Type | Name | Unit | Description |
-|---|---|---|---|
-| sensor | Status | enum | `idle` / `ready` / `measuring` / `preparing` / `frame` / `motion` / `starting` / `running` / `paused` / `finishing` |
-| sensor | Last job outcome | enum | `idle` / `running` / `paused` / `completed` / `aborted` |
-| sensor | Installed tool | — | Human-readable tool name (`Diode 40 W`, `Infrared 2 W`, …) |
-| sensor | Tool power | W | Rated power of the installed laser head |
-| sensor | Tool runtime | h | Working seconds of the *current* tool |
-| sensor | Working time | h | Lifetime working time across all tools |
-| sensor | Standby time | h | Lifetime standby time |
-| sensor | Session count | — | Lifetime number of completed sessions |
-| sensor | Position X / Y / Z | mm | Current head position |
-| sensor | Probe Z | mm | Last Z-probe reading *(diagnostic)* |
-| sensor | Light brightness | % | Internal fill-light brightness |
-| sensor | Job File | — | Currently loaded job filename |
-| sensor | Firmware Version | — | *Diagnostic* |
-| sensor | Tool type | — | *Diagnostic* — raw `M54` value |
-| sensor | Tool capabilities | — | *Diagnostic, off by default* — raw `M116` bitmap |
-| sensor | Tool offset X / Y | mm | *Diagnostic, off by default* — physical mounting offset |
-| sensor | Serial number | — | *Diagnostic, off by default* |
-| sensor | Auxiliary firmware 1/2, Tool firmware | — | *Diagnostic, off by default* |
-| binary_sensor | Running | `running` | A job is actively executing |
-| binary_sensor | Paused | — | The current job is paused |
-| binary_sensor | Last job aborted | `problem` | The previous job ended via Stop |
-| binary_sensor | Job armed | — | Job preloaded — waiting on the physical Start button |
-| binary_sensor | Alarm | `problem` | Machine reports an alarm condition |
-| binary_sensor | Connection | `connectivity` | WebSocket session is up *(diagnostic)* |
-| **light** | Fill light | brightness | Dimmable interior fill light, controllable from HA |
-| **button** | Stop | — | Abort the running job (verified `M108`) |
-| **button** | Pause | — | Pause the running job (verified `M22 S1`) |
-| **button** | Resume | — | Resume a paused job (verified `M22 S2`) |
+- **Real-time monitoring** via WebSocket push — status, position, alarm
+- **Job control** — Stop, Pause and Resume buttons that work from HA
+- **Job management** — save jobs from the laser, re-start them later with a
+  confirmation dialog showing material, thickness and laser module
+- **Fill light control** — dimmable light entity with standby detection
+- **XCS coexistence** — works alongside the xTool Creative Space desktop app
+- **Graceful offline** — a powered-off laser is normal, not an error
 
 ---
 
@@ -138,35 +32,125 @@ open and pounding the WebSocket.
 
 ### HACS (recommended)
 
-1. Open HACS → ⋮ → **Custom repositories**
-2. Add `https://github.com/hilman2/ha-xtool-s1` as type **Integration**
+1. Open **HACS** → ⋮ → **Custom repositories**
+2. Add `https://github.com/hilman2/ha-xtool-s1` — type **Integration**
 3. Install → restart Home Assistant
-4. **Settings → Devices & Services → Add Integration → "xTool S1"**
-5. Either run a **network scan** or enter the laser's IP manually
+4. **Settings → Devices & Services → Add Integration → xTool S1**
+5. Run a **network scan** or enter the laser's IP manually
 
 ### Manual
 
-Copy `custom_components/xtool_s1/` into your HA config's `custom_components/`
-folder and restart Home Assistant.
+Copy `custom_components/xtool_s1/` into your HA `custom_components/` folder
+and restart Home Assistant.
 
 ---
 
-## Smoke test
+## Entities
 
-After installation, sanity-check the integration on a real laser:
+All entities are created automatically per device.
 
-1. **Device shows up** under Settings → Devices → xTool S1 with the correct
-   model, firmware version, and serial number.
-2. **Status sensor** changes to `running` within a second of starting an
-   engraving job (push path is live).
-3. **Position X/Y** sensors update continuously while the laser moves.
-4. **Alarm sensor** flips to *On* when you open the lid mid-job.
-5. **Connection sensor** drops to *Off* when you unplug the laser, then
-   recovers to *On* within ~30 seconds after replugging — no HA restart
-   required.
-6. **Diagnostics export** (Settings → Devices → xTool S1 → ⋮ → Download
-   diagnostics) returns a JSON file with the host IP and serial number
-   redacted.
+### Sensors
+
+| Name | Description |
+|---|---|
+| Status | Machine state: idle, ready, measuring, running, paused, … |
+| Last job outcome | idle / running / paused / completed / aborted |
+| Installed tool | Detected laser head (e.g. *Diode 40 W*) |
+| Working time | Total working hours (lifetime) |
+| Session count | Total number of job starts (lifetime) |
+| Job file | Currently loaded job filename |
+| Light brightness | Fill light percentage (0 when standby) |
+
+<details>
+<summary>Diagnostic sensors (hidden by default)</summary>
+
+| Name | Description |
+|---|---|
+| Firmware version | Main board firmware |
+| Serial number | Device serial |
+| Tool type, Tool power, Tool capabilities | Raw tool metadata |
+| Tool working time | Accumulated working seconds of the current tool type |
+| Tool offset X / Y | Physical mounting offset |
+| Position X / Y / Z, Probe Z | Head coordinates |
+| Standby time, Auxiliary firmware 1/2, Tool firmware | Additional diagnostics |
+
+</details>
+
+### Binary sensors
+
+| Name | Description |
+|---|---|
+| Running | A job is actively executing |
+| Paused | The current job is paused |
+| Alarm | Machine reports an alarm (e.g. lid open) |
+| Job armed | Job preloaded, waiting for physical Start button |
+| Last job aborted | Previous job ended via Stop (sticky) |
+| Connection | WebSocket is connected *(diagnostic)* |
+
+### Controls
+
+| Type | Name | Description |
+|---|---|---|
+| Light | Fill light | Dimmable interior light — detects standby auto-off |
+| Button | Stop | Abort the running job |
+| Button | Pause | Pause the running job |
+| Button | Resume | Resume a paused job |
+
+---
+
+## Job management
+
+Save the current job from the laser, then re-run it later — directly from
+your phone, no XCS needed.
+
+### Lovelace card
+
+The integration ships a custom card that auto-registers on installation.
+Add it to any dashboard:
+
+```yaml
+type: custom:xtool-s1-jobs-card
+```
+
+The card provides:
+- **Save** — downloads the current gcode from the laser and stores it with
+  title, description, material and thickness
+- **Job list** — shows all saved jobs with their metadata
+- **Start** — confirmation dialog showing material, thickness and laser
+  module, then uploads the job and triggers the start sequence.
+  The user must press the physical Start button on the device.
+- **Delete** — remove saved jobs
+
+### Services
+
+The card uses these services under the hood. You can also call them from
+automations or scripts:
+
+| Service | Description |
+|---|---|
+| `xtool_s1.save_job` | Download and store the current job |
+| `xtool_s1.start_job` | Upload a saved job and trigger the start sequence |
+| `xtool_s1.delete_job` | Remove a saved job |
+| `xtool_s1.list_jobs` | List all saved jobs with metadata |
+
+---
+
+## XCS coexistence
+
+The S1 firmware can kick WebSocket clients when the **xTool Creative Space**
+desktop app is active. This integration handles it gracefully:
+
+| Mode | Trigger | Behaviour |
+|---|---|---|
+| **Normal** | WebSocket healthy | Real-time push updates |
+| **Coexist** | 3+ WS kicks in 30 s | HTTP heartbeat only; sensors show cached values; light and buttons keep working |
+| **Offline** | Device powered off | All dynamic values reset to off/zero; info sensors keep last known values; no errors in HA |
+
+All write operations (light, stop, pause, resume, job upload) go through
+HTTP and are unaffected by WebSocket issues.
+
+**Tip**: If XCS is connected via **USB** instead of WiFi, the WebSocket
+runs without interruption.
 
 ---
 
@@ -175,71 +159,55 @@ After installation, sanity-check the integration on a real laser:
 ### Notify when a job finishes
 
 ```yaml
-alias: xTool S1 — job done
 trigger:
   - platform: state
     entity_id: binary_sensor.xtool_s1_running
     from: "on"
     to: "off"
 action:
-  - service: notify.mobile_app
+  - action: notify.mobile_app
     data:
-      title: "xTool S1"
-      message: "Engraving finished."
+      title: xTool S1
+      message: Job finished.
 ```
 
-### Turn the exhaust fan on while a job runs
+### Exhaust fan follows laser
 
 ```yaml
-alias: xTool S1 — exhaust fan
 trigger:
   - platform: state
     entity_id: binary_sensor.xtool_s1_running
 action:
-  - service: "switch.turn_{{ 'on' if trigger.to_state.state == 'on' else 'off' }}"
+  - action: "switch.turn_{{ 'on' if trigger.to_state.state == 'on' else 'off' }}"
     target:
       entity_id: switch.workshop_exhaust_fan
 ```
 
-### Page on alarm
+### Alert on alarm
 
 ```yaml
-alias: xTool S1 — alarm
 trigger:
   - platform: state
     entity_id: binary_sensor.xtool_s1_alarm
     to: "on"
 action:
-  - service: notify.persistent_notification
+  - action: notify.persistent_notification
     data:
-      title: "xTool S1 alarm"
-      message: "Lid open or safety stop triggered."
+      title: xTool S1 alarm
+      message: Lid open or safety stop triggered.
 ```
 
 ---
 
 ## Development
 
-Tests run inside WSL Ubuntu with Python 3.13. The venv lives outside `/mnt/d`
-to dodge a long-path bug in the WSL ↔ NTFS bridge that strips files from the
-installed Home Assistant package.
-
 ```bash
-./scripts/test.sh              # full suite, parallel, 100 % coverage gate
-./scripts/test.sh -k config    # filter to a subset
+./scripts/test.sh              # 266 tests, parallel, 100% coverage gate
 ./scripts/lint.sh              # black + ruff
 ```
 
-The CI on every push and PR runs:
-
-- `black --check` + `ruff check`
-- `home-assistant/actions/hassfest`
-- `hacs/action` integration validation
-- `pytest -n auto --cov-fail-under=100`
-
-`main` is branch-protected: every job above must pass before a merge is
-allowed. Tagged releases (`v*`) re-run the full CI as a gate and only then
-publish a GitHub Release with the integration zip.
+CI runs on every push: black, ruff, hassfest, HACS validation, pytest.
+`main` is branch-protected. Tagged releases re-run CI before publishing.
 
 ---
 
