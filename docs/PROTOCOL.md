@@ -16,14 +16,40 @@ device by direct probing and Wireshark captures of the XCS app.
 
 | Port | Proto | Purpose |
 |---|---|---|
-| **8080** | TCP / HTTP | command gateway + tiny info reads (`/system`, `/cmd`) |
+| **8080** | TCP / HTTP | command gateway, info reads, **file server** (`/system`, `/cmd`, `/upload`, `/gcode/`) |
 | **8081** | TCP / WebSocket | live state push frames + command stream |
 | **20000** | UDP | JSON discovery beacon |
-| any other tested | — | closed (80, 443, 8000, 8082, 9100, 20001, …) |
+| any other tested | — | closed (80, 443, 8000, 8082, 8329, 8780, 9100, 20001, …) |
 
 The S1 has **no authentication** on any of these. The XCS app uses
 the WebSocket exclusively for both reads and writes — but the HTTP
 gateway is a viable side-channel that the app ignores.
+
+### 1.1 Cross-model API comparison ✅ (web research 2026-04-09)
+
+xTool devices use **four API generations**. The S1 is its own hybrid:
+
+| Generation | Models | HTTP API | WebSocket | Source |
+|---|---|---|---|---|
+| Gen 1 | D1, D1 Pro | Rich REST: `/ping`, `/progress`, `/peripherystatus`, `/list`, `/cnc/data?action=pause\|resume\|stop` | Simple text events (`ok:IDLE`, `err:flameCheck`) | 1RandomDev/xTool-Connect |
+| Gen 2 | P2, F1, M1, M1 Ultra | JSON REST: `/device/runningStatus`, `/peripheral/gap\|smoking_fan\|ext_purifier\|machine_lock` | Not used for status | BassXT/xtool |
+| Gen 3 | M1 (older FW) | `/cnc/status`, `/cnc/cmd`, camera on port 8329 | Not used | fritzw/xtm1_toolkit |
+| **S1** | **S1** | **Minimal**: only `/system` (3 actions), `/cmd`, `/upload`, `/gcode/` file server. **No** `/ping`, `/progress`, `/peripheral/*`, `/device/*`, `/cnc/*`, camera. | **Full M-code protocol** — all state via WS push frames | This document |
+
+**Verified 2026-04-09**: Every D1/P2/F1/M1 endpoint was tested
+against hilman2's S1 — all return 404. The S1 has the smallest
+HTTP surface of any xTool device but the richest WebSocket protocol.
+
+Key differences from other models:
+- **No `/peripherystatus`** — lid, flame, tilt sensors are only
+  available via WS (`M53`, `M25`, `M340`)
+- **No `/progress`** — job progress only via WS (`M7`)
+- **No `/cnc/data?action=pause/resume/stop`** — must use WS
+  M-codes (`M108` for stop; pause/resume triggers not yet isolated)
+- **`M13` scale**: S1 uses `A<0-100> B<0-100>`, D1/M1 uses `S<0-255>`
+- **Upload format**: S1 = raw text POST, D1 = multipart form, M1 = zipped body
+- **No camera port** (8329) — despite the S1 having a camera, it's
+  not network-accessible
 
 ---
 
@@ -78,17 +104,29 @@ mainly useful as:
 
 ### Things that DON'T exist on the S1
 
-- `/list` / `/files` / `/sd` (no file management)
-- ~~`/upload` (no job upload)~~ **DISPROVED 2026-04-09** — see §3.1
-- `/cnc/data?action=pause/resume/stop` (D1-style — 404)
-- `/peripherystatus`, `/getmachinetype`, `/getlaserpowerinfo` (D1-style — 404)
-- `/progress`, `/getmachineconfig`
-- WebSocket upgrade on port 8080
-- Any `/api/...` or `/v1/...` REST paths
-- A `Server:` HTTP header (the device hides its impl)
-- Other HTTP verbs on `/system` (POST/PUT/DELETE → 405)
-- Any `/system?action=…` setter (`set_dev_name`, `set_*` etc.) — all
-  either 404 or hang without changing state
+Exhaustively tested 2026-04-09 (200+ paths, all 4 xTool API
+generations, 60+ ports):
+
+- **D1-style**: `/ping`, `/progress`, `/peripherystatus`, `/getmachinetype`,
+  `/getlaserpowertype`, `/getlaserpowerinfo`, `/getmachineconfig`,
+  `/list`, `/read`, `/framing`, `/updater`, `/upgrade`,
+  `/cnc/data?action=pause/resume/stop`, `/cnc/status`, `/cnc/cmd`
+- **P2/F1/M1-style**: `/device/runningStatus`, `/device/machineInfo`,
+  `/device/workingInfo`, `/peripheral/gap`, `/peripheral/smoking_fan`,
+  `/peripheral/ext_purifier`, `/peripheral/machine_lock`,
+  `/peripheral/airassist`, `/peripheral/drawer`, `/config/get`,
+  `/status`, `/processing/stop`
+- **M1-camera**: port 8329 closed, `/snap`, `/camera`,
+  `/file?action=download`
+- **Generic**: `/api/...`, `/v1/...`, `/v2/...`, WebSocket upgrade on
+  8080, any REST path not listed in the verified section
+- **Other ports**: 8329, 8780, 20001 all closed. Only 8080+8081 TCP
+  and 20000 UDP are open.
+- **HTTP verbs**: only GET on `/system`, GET+POST on `/cmd`,
+  POST on `/upload` and `/delete/`. All other verbs → 405.
+- **`/system?action=` setters**: `set_dev_name`, `set_*`,
+  `get_working_sta`, `offset`, `dotMode` — all hang (timeout, no
+  response). Only `mac*`, `version*`, `get_dev_name*` work.
 
 ### `/cmd` is pure passthrough
 
@@ -240,6 +278,85 @@ xToolStudio/1.6.8 Chrome/136.0.7103.49 Electron/36.2.0 Safari/537.36
 
 XCS is an **Electron app** — that explains some of the WebSocket
 quirks (Electron's ws implementation isn't always 100% standard).
+
+### 3.3 File Server (`/gcode/`) ✅ — discovered 2026-04-09
+
+The S1 exposes a **full HTTP file server** built on ESP-IDF's
+`file_server.c` example. The storage backend is a **microSD card**
+(evidenced by a `System Volume Information/` directory created by
+Windows when the card was formatted).
+
+#### Endpoints
+
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| GET | `/gcode/` | **Directory listing** (HTML page titled "S1 File Server") | Includes upload form + file table with delete buttons |
+| GET | `/gcode/<filename>` | **File download** | Returns raw file content |
+| POST | `/upload?filename=<name>` | **File upload** | `taskId` is optional; body is raw file content; max 2 GB |
+| POST | `/delete/gcode/<filename>` | **File deletion** | Returns success/failure |
+
+#### Observed files on hilman2's device (2026-04-09)
+
+| Name | Type | Size | Purpose |
+|---|---|---|---|
+| `System Volume Information/` | dir | — | SD card metadata (Windows-formatted) |
+| **`logs.txt`** | file | **3.2 MB** | **Firmware debug log — GOLDMINE** (see §10) |
+| `update/` | dir | — | Firmware update staging area |
+| `test.gcode` | file | 0 | Empty test file |
+| `frame.gcode` | file | 535 | Last frame-preview G-code |
+| `tmp.gcode` | file | 842 | Last uploaded job G-code |
+
+#### Key properties
+- **Files uploaded via `/upload` are readable back via `/gcode/`** —
+  the upload target directory IS the file-server root.
+- **`filename` parameter is required** — POST without it returns 500
+  "Failed to create file".
+- **No subdirectory creation** — `filename=subdir/test.txt` returns
+  "Failed to create file".
+- **Path traversal blocked** — `filename=../escape.txt` fails.
+- **Case-sensitive paths** — `/Gcode/` and `/GCODE/` return 404.
+- **`/gcode` (no trailing slash) → 404** — only `/gcode/` works.
+- **`/gcode/index.html` → 307 redirect** to `/gcode/`.
+- **`logs.txt` grows in real-time** — the firmware appends to it
+  continuously. Readable while the device is running.
+
+#### Upload form JavaScript
+The HTML page includes a browser-based upload form with this
+structure:
+```javascript
+upload_path = "/upload?filename=" + filePath;
+// Max size: 2024*1024*1024 (≈2 GB)
+// POST with raw file body (not multipart)
+// No spaces allowed in filename
+```
+
+#### Implication for the integration
+- **`GET /gcode/logs.txt`** = synchronous HTTP read of runtime stats
+  (see §10 for what's in the logs). This works even when the
+  WebSocket is blocked by XCS — it's a pure HTTP read on the
+  file server, not the `/cmd` fire-and-forget path.
+- **`GET /gcode/`** can serve as a storage-health check.
+- **Job management** is feasible: upload via POST, verify via GET,
+  clean up via POST `/delete/`.
+
+### 3.4 `/system?action=` implementation details ✅
+
+Tested 200+ action names on 2026-04-09. The endpoint uses **prefix
+matching** with exactly three handlers:
+
+| Prefix | Response | Example |
+|---|---|---|
+| `mac*` | MAC address (`30:30:f9:71:7a:f4\n`) | `mac`, `machine_info`, `macblabla` |
+| `version*` | Sub-firmware version | `version`, `versioninfo`, `version123` |
+| `get_dev_name*` | Device name (`xTool S1`) | `get_dev_name`, `get_dev_namex` |
+
+- **Unknown actions cause the server to hang** (no response, curl
+  timeout) — NOT a 404. This is important: don't poll with random
+  action names, it will tie up the HTTP server.
+- **Only GET is supported** — POST/PUT/DELETE/OPTIONS/HEAD all
+  return 405.
+- **`get_dev_name` now returns `xTool S1`** (was empty on
+  2026-04-08). Likely set by the XCS app during a recent session.
 
 ---
 
@@ -695,23 +812,135 @@ gracefully (missing field == leave state untouched).
 
 ### 5.7 `M222` work-state codes
 
-| Code | Meaning | Status |
-|---|---|---|
-| `S1`  | Ready (brief transition state) | ✅ |
-| `S3`  | Idle | ✅ |
-| `S10` | Measuring (auto-height calibration) | ✅ |
-| `S11` | **Frame run / job active** — NEW 2026-04-09, observed during frame preview, persists after head returns to its origin position | 🟡 |
-| `S12` | **Motion executing** — NEW 2026-04-09, very brief, between S11 and the actual M303 movement stream | 🟡 |
-| `S13` | Starting (job queued, preparing to run) | ✅ |
-| `S14` | Running (job actively executing) | ✅ |
-| `S15` | **Paused** — NEW 2026-04-09, observed when user clicks Pause during a real job, head returns to origin position and stays | 🟡 |
-| `S18` | **Preparing / transitioning** — NEW 2026-04-09, appears both before S10 in probe sequence and after S11 when a job ends | 🟡 |
-| `S19` | Finishing (job wrapping up) | ✅ |
+Complete map, compiled from WebSocket captures and **firmware logs**
+(`logs.txt` on the SD card, see §10). The log entries use the format
+`sta_change_to:<n>` followed by `M222 S<n>`.
 
-Other S-codes likely exist (Pause, Stop, Error, Sleep) but haven't
-been observed in our captures yet. There is also no Pause/Stop for a
-frame-preview run — it's a single-shot operation that the user
-cannot interrupt.
+| Code | Meaning | Count in logs | Status |
+|---|---|---|---|
+| `S1`  | Ready (brief transition state) | 529 | ✅ |
+| `S2`  | **User button interaction** — triggered by physical button press sequence (`comb_key` events) | 2 | 🟡 |
+| `S3`  | Idle | 118 | ✅ |
+| `S7`  | **🚨 Lid opened during operation — safety interlock!** Always follows `M53 B1` (cover-open signal). Laser immediately disabled. | 6 | ✅ (from logs) |
+| `S8`  | **File transfer error** — preceded by `"file trans timeout!!!"` in logs. The ESP32→GD32 gcode download failed. | 4 | ✅ (from logs) |
+| `S9`  | **🔥 FIRE ALARM!** Preceded by `"fire first happened alarm!"` and `M53 F1` (event:20). Laser disabled, job cancelled immediately. | 1 | ✅ (from logs) |
+| `S10` | Measuring (auto-height Z-probe) | 103 | ✅ |
+| `S11` | Frame run / job active — persists after head returns | 15 | ✅ |
+| `S12` | Motion executing — brief, between S11 and M303 stream | 8 | 🟡 |
+| `S13` | Starting (job queued, preparing to run) | 232 | ✅ |
+| `S14` | Running (job actively cutting/engraving) | 238 | ✅ |
+| `S15` | Paused (user-initiated via app) | 15 | ✅ |
+| `S16` | **Firmware/update mode** — SD bus switches to ESP32, followed by `M2037` calibration data push | 12 | 🟡 |
+| `S18` | Preparing / transitioning (between other states) | 142 | ✅ |
+| `S19` | Finishing (job wrapping up) | 201 | ✅ |
+| `S22` | **Homing error** — observed once after a failed homing sequence (`stop!` + emergency cancel) | 1 | 🟡 |
+| `S24` | **Job preloaded, waiting for physical start button!** SD bus switches to GD32 (`plugin_sd_card_trans_switch to GD32 mode!!!`), then waits for `comb_key` button presses. This IS the "armed" state from §6.0d. | 94 | ✅ (from logs) |
+
+**S24 is the missing link**: it's the state between "job uploaded"
+and "user pressed the hardware button". The integration can detect
+this state to fire a "job armed, press button to start" notification.
+
+### 5.8 `M53` event codes ✅ — decoded from `logs.txt` (2026-04-09)
+
+`M53` is the **hardware I/O event bus**. The firmware logs entries as
+`active report:M53 <code>, event:<n>`. Each letter+value pair
+represents a different subsystem.
+
+| Code | Event # | Meaning | Count in logs | Status |
+|---|---|---|---|---|
+| `M53 A0` | 0 | **Idle / no active event** — most frequent, fires when events clear | 484 | ✅ |
+| `M53 A1` | 1 | **Active / operation in progress** | 2 | ✅ |
+| `M53 A2` | — | Rare transitional state | 3 | ❓ |
+| `M53 B0` | 3 | **Cover/lid closed** (debounced, both signals low) | 322 | ✅ |
+| `M53 B1` | 4 | **Cover/lid opened or moving** (debounced, one or both signals high). Triggers `M222 S7` safety interlock during operation. | 35 | ✅ |
+| `M53 C0` | 5 | **Baseplate check complete** — fires on boot after baseplate ADC read | 71 | ✅ |
+| `M53 C1` | — | Baseplate event (rare) | 1 | ❓ |
+| `M53 D3` | 18 | **Device restart / reboot** — always appears right before `"The log file is started successfully"` | 26 | ✅ |
+| `M53 F1` | 20 | **🔥 FIRE ALARM — flame detected!** Triggers `M222 S9`, immediate laser disable + job cancel | 1 | ✅ |
+| `M53 F2` | 21 | **Flame sensor initialized / clear** — fires on boot after laser-type detection | 1 | ✅ |
+| `M53 L1` | 19 | **Laser work-time counters flushed to storage** — fires right after `acc_*_laserworktime` lines | 41 | ✅ |
+| `M53 S0` | 9 | **Safety key disengaged** (sekey ADC state 0) | 1 | ✅ |
+| `M53 S1` | 10 | **Safety key engaged** (sekey ADC state 1) | 1 | ✅ |
+| `M53 U0` | 11 | **USB disconnected** | 64 | ✅ |
+| `M53 U1` | 12 | **USB connected** | 58 | ✅ |
+
+#### Cover/lid sensor detail (from logs)
+
+The lid has **two sensor signals** with debouncing and a 4-state
+machine:
+
+```
+cover current signal <sig1> <sig2>, debouncing after signal <sig1> <sig2>, state <n>
+```
+
+| State | Signal pattern | Meaning |
+|---|---|---|
+| 0 | `0 0` | **Lid open** (both sensors clear) |
+| 2 | `0 1` | **Lid moving / partially closed** (one sensor triggered) |
+| 3 | `1 1` | **Lid fully closed** (both sensors triggered) |
+
+This means `M25` (the 5-flag bitmap) likely maps to:
+`X=lid_sensor_1, Y=lid_sensor_2, Z=?, T=?, B=?`
+
+#### Safety key (sekey) detail
+
+The safety key uses an **ADC** (analog-to-digital converter):
+- `sekey current adc 4095` → key engaged (max ADC = pulled high)
+- `sekey current adc 0-3` → key disengaged (near-zero)
+- Has a filter and state machine similar to the lid sensor
+
+### 5.9 `M2037` — motor calibration / flame sensor data 🟡
+
+Discovered in `logs.txt`. Has **two distinct formats**:
+
+#### Format 1: Integer (motor/stepper current readings?)
+
+```
+M2037 A25 B25 C25 D25 E25 F25 G25 H25 F53
+M2037 A16 B16 C16 D16 E16 F16 G16 H16 F10
+```
+
+9 values (A-H + duplicate F with different value). All A-H values
+are identical within each reading (25 or 16), while the trailing F
+value varies (53, 46, 24, 10, 16). Could be motor/stepper current
+sensor readings across 8 axes/channels.
+
+#### Format 2: Float (flame/temperature sensor data?)
+
+```
+M2037 A0.000 B0.000 C1.000 D0.000 E2.001 T16    ← boot (cold)
+M2037 A0.000 B0.000 C0.000 D0.000 E0.000 T16    ← idle
+M2037 A0.000 B0.000 C0.375 D0.003 E0.757 T28    ← after fire alarm!
+M2037 A0.000 B0.000 C0.312 D0.003 E0.632 T28    ← after fire alarm!
+```
+
+5 float values + `T` (likely temperature in °C: 16°C cold, 28°C
+after operation). C and E values spike during/after the fire alarm
+event — **strong candidate for flame sensor readings**.
+
+### 5.10 `M363` — job progress indicator ❓
+
+Appears in logs during job execution, always as `M363 S0`:
+```
+M363 S0    ← appears 5 times in logs, all during active jobs
+```
+
+Likely a progress/status code. Possibly `S0` = "in progress" and
+other values = "complete" or "error".
+
+### 5.11 `M330` — SD card bus ownership ✅ (from logs)
+
+Confirmed from firmware logs. `M330` controls which MCU has access
+to the shared SD card bus:
+
+| Command | Direction | Meaning |
+|---|---|---|
+| `M330 S0` | USB cmd (internal) | **Switch SD bus to ESP32** (WiFi chip, file server access) |
+| `M330 S1` | USB cmd (internal) | **Switch SD bus to GD32** (motion controller, gcode execution) |
+
+The S1 logs show this switching happening dozens of times per session.
+During job execution, the GD32 owns the SD card to read gcode; during
+idle and file transfers, the ESP32 owns it for the HTTP file server.
 
 ---
 
@@ -965,34 +1194,42 @@ In rough priority order:
    1%/10 mm/s job and a 100%/100 mm/s job. The real cut parameters
    are in the binary Gcode upload (see §6.0c). To get them we'd
    have to parse the upload — out of scope for v1.
-4. **`M1109` — what is it really?** — the fan hypothesis is
-   disproved (2026-04-09: fans were off, E58.000 was still present).
-   Possibilities to test: read M1109 in different machine states
-   (cold start, after running for 30 min, lid open, lid closed,
-   probe extended) and see which fields move.
-5. **`M25` flag bitmap** — open/close the lid and re-read M25; one of
-   the 5 flags should flip. Whichever flag changes is `lid_open`. We
-   already saw the X flag flip between two captures (0→1).
+4. ~~**`M1109` — what is it really?**~~ **SOLVED 2026-04-09** (from
+   tool-swap diff §5.5g): M1109 is the **tool mounting offset** in
+   high-precision format. A,B = primary offset (matches M98), C,D =
+   secondary offset, E58.000 = constant hardware dimension. Changes
+   per tool, NOT per temperature/fan state.
+5. **`M25` flag bitmap** — the logs partially confirm this: the cover
+   sensor has two signals with a 4-state debounce machine (§5.8).
+   Still need to verify which M25 flag maps to which sensor by
+   toggling the lid while reading M25 via WS.
 6. **`M9009`** — connect an AP2 air cleaner, re-read; `S-1` should
    change. That gives us the "is AP2 attached" sensor.
-7. **The mechanism the XCS app uses to kick other WebSocket clients**
-   — answer 2026-04-09 night: the XCS Desktop app sends `M303` (a
-   read request) **once per second**, and the server pushes the
-   resulting `M303 X<f> Y<f>` reply **to every connected client**.
-   The combination of constant fan-out and our foreign connection
-   seems to overwhelm a fairness/buffer limit in the firmware,
-   dropping our connection. See §5.5h for the captured polling
-   pattern.
-
-   → Architectural consequence: the integration must treat the
-   WebSocket as **best-effort** and never let WS unavailability
-   make HTTP-side functionality (like the fill-light entity) go
-   unavailable. See §9 below.
-8. **Job upload protocol** — does the app POST a giant gcode file to
-   `/cmd`, or is there a transport we haven't found? `M2810 ok` may be
-   an ack for that upload happening just before.
-9. **`/cmd?cmd=set_dev_name&name=...`** — confirmed not working via the
-   public action list. Maybe a different endpoint exists.
+7. ~~**The mechanism the XCS app uses to kick other WebSocket clients**~~
+   **ANSWERED 2026-04-09 night**: M303 polling at 1/s → fan-out
+   overwhelms firmware. See §5.5h and §9.
+8. ~~**Job upload protocol**~~ **ANSWERED 2026-04-09**: `POST /upload?
+   taskId=<UUID>&filename=tmp.gcode` with raw gcode body. See §3.1.
+   The file goes to the SD card (`/gcode/tmp.gcode`), then the GD32
+   reads it via SD bus switch (`M330`). The `start download tmp.gcode`
+   log entry confirms this pathway.
+9. **`M2037` float format** — the flame sensor hypothesis needs
+   verification. Read M2037 with the WebSocket in different states
+   (cold boot, mid-job, after flame test if possible) and compare
+   the C/E/T values.
+10. **`M53` as a readable M-code** — we know M53 fires as push events,
+    but can we also READ it with a `M53` request (no args) like the
+    other M-codes in §5.5h? If so, it would give us lid state, USB
+    state, and fire-alarm state in a single query.
+11. **`/delete/` endpoint** — returns "File does not exist" for files
+    that ARE listed in `/gcode/`. May require URL-encoded paths,
+    different Content-Type, or only work from the HTML form. Needs
+    more testing.
+12. **`logs.txt` parsing for real-time stats** — the firmware writes
+    `acc_worktime`, `acc_workcount`, `acc_sys_runtime`, and per-tool
+    `acc_*_laserworktime` every ~5 minutes. These are readable via
+    HTTP even when the WebSocket is blocked. Feasibility: parse the
+    last few KB of logs.txt to extract current counters (see §10).
 
 ---
 
@@ -1081,3 +1318,168 @@ wsl -d Ubuntu -- bash -lc \
 - Mark it ✅/🟡/❓
 - Record sample values
 - Note the date and the device firmware version it was tested against
+
+---
+
+## 10. Hardware architecture (from firmware logs) ✅
+
+Decoded 2026-04-09 from `logs.txt` (3.2 MB, ~70k lines, readable
+via `GET /gcode/logs.txt`). The log goes back to the first boot of
+hilman2's device in 2023.
+
+### 10.1 Dual-MCU design: ESP32 + GD32
+
+The S1 has two microcontrollers on a shared bus:
+
+| MCU | Role | Evidence from logs |
+|---|---|---|
+| **ESP32** | WiFi, HTTP server, WebSocket server, file server, cloud connectivity | `plugin_sd_card_trans_switch to ESP32 mode!!!`, `wifi cmd M3xx` |
+| **GD32** | Motion control, laser firing, sensor reading, state machine | `plugin_sd_card_trans_switch to GD32 mode!!!`, `usb cmd M3xx`, all stepper/laser/probe operations |
+
+Communication between them happens over an **internal USB bridge**:
+- `usb cmd M330 S0` = ESP32 tells GD32 "I need the SD card"
+- `usb cmd M330 S1` = ESP32 tells GD32 "you can have the SD card back"
+- `wifi cmd M322` / `wifi cmd M323` = ESP32 forwards network commands to GD32
+
+The **SD card bus is shared** — only one MCU can access the card at
+a time. This is why `M330` switches are so frequent in the logs (600+
+entries). During job execution, GD32 owns the SD to read gcode;
+during idle and file transfers, ESP32 owns it for the HTTP file
+server.
+
+### 10.2 Laser module identification
+
+The firmware logs two laser types on boot (the S1 supports hot-swap):
+
+```
+laser type:0, power:40, brand:1, process_type:1, laser_tube:2    ← 40W Diode
+laser type:1, power:2, brand:0, process_type:0, laser_tube:0     ← 2W IR
+```
+
+| Field | Meaning |
+|---|---|
+| `type` | Laser module type (0=diode, 1=IR) |
+| `power` | Wattage |
+| `brand` | 0=generic/third-party, 1=xTool branded |
+| `process_type` | 0=marking, 1=cutting/engraving |
+| `laser_tube` | 0=none/solid-state, 2=diode tube |
+
+### 10.3 Thermal management (2W IR module)
+
+The 2W IR laser has active thermal management logged:
+```
+2w laser exit preheat                              ← preheat phase on startup
+2w laser temp less than 28.000, laser power on     ← below threshold → fire OK
+2w laser temp greadter than 28.000, laser power off ← above threshold → cut power
+2w laser fan off                                   ← fan cycles with temperature
+```
+
+Temperature threshold is **28°C**. The 40W diode module also has a
+fan (`40w laser fan off` logged) but its thermal management is less
+aggressive.
+
+### 10.4 Fire detection system
+
+The S1 has a **flame sensor** (likely optical, given the M2037 float
+readings). Detection flow from logs:
+
+```
+fire first happened alarm!       ← flame sensor triggers
+M53 F1, event:20                 ← fire event pushed
+M222 S9                          ← state machine → FIRE ALARM
+motion laser disable!            ← laser immediately cut
+cancel!                          ← job cancelled
+M2037 A0.000 B0.000 C0.375 D0.003 E0.757 T28   ← sensor readings
+```
+
+The `M2037` float values (C, E) change during a fire event compared
+to normal idle (C goes from 1.0 → 0.375, E from 2.0 → 0.757). T
+is likely temperature in °C (28°C after operation).
+
+### 10.5 Per-tool lifetime counters (from logs)
+
+The firmware writes running totals to flash every ~5 minutes:
+
+```
+config_storage_write_sys_running_info
+acc_worktime:151566;               ← M2008.A (seconds)
+acc_workcount:228;                 ← M2008.B (job count)
+acc_sys_runtime:1291260;           ← M2008.C (standby seconds)
+acc_2w_laserworktime:880;          ← per-tool: 2W IR module
+acc_default_laserworktime:0;
+acc_10w_laserworktime:0;
+acc_20w_laserworktime:0;
+acc_40w_laserworktime:3086;        ← per-tool: 40W Diode module
+```
+
+**M2008.D is the currently-installed tool's work time**, not a global
+counter. When tools are swapped, M2008.D switches to the new tool's
+accumulated time. This is confirmed by §5.5g (D changed from 3035 to
+880 when swapping from 40W to 2W).
+
+The counter names reveal **6 supported laser modules** (by wattage):
+- default (unknown/generic)
+- 2W (IR marking)
+- 3W (exists in firmware but not tested)
+- 10W (exists in firmware but not tested)
+- 20W (exists in firmware but not tested)
+- 40W (diode cutting/engraving)
+
+### 10.6 Config storage subsystem
+
+The firmware uses named keys to persist data:
+
+```
+S1_CONFIG_KEY wirte susecc          ← device configuration
+SYS_RUNNING_INFO wirte susecc       ← lifetime counters
+LASER_3W_INFO wirte susecc          ← per-tool stats
+```
+
+(Note: "wirte susecc" is a firmware typo for "write success")
+
+These are written to flash (NVS or similar), NOT the SD card.
+
+### 10.7 HTTP polling path for runtime stats (Coexist mode)
+
+When the WebSocket is blocked by XCS, we can still get **fresh
+lifetime counters** by reading the tail of `logs.txt`:
+
+```bash
+# The last few KB of logs.txt contain the most recent counter flush
+curl -s http://<S1-IP>:8080/gcode/logs.txt | tail -50 | grep "acc_"
+```
+
+This fires every ~5 minutes and gives us:
+- `acc_worktime` (= M2008.A)
+- `acc_workcount` (= M2008.B)
+- `acc_sys_runtime` (= M2008.C)
+- Per-tool work times
+
+**Feasibility for the integration**: In Coexist mode, poll
+`GET /gcode/logs.txt` and parse the tail for the latest `acc_*`
+lines, then update the lifetime sensor entities. This is a pure
+HTTP read that doesn't need the WebSocket at all.
+
+**Note**: The HTTP Range header is **not supported** — the server
+ignores it and returns the full file (200, not 206). For a 3 MB
+log file, this is ~1-2 seconds of download. Acceptable for a
+5-minute polling interval but not for real-time. Alternative:
+track `Content-Length` changes between polls — if it hasn't grown,
+don't re-download.
+
+### 10.8 Button/key events
+
+Physical button presses are logged with combined-key codes:
+
+```
+evt:0, comb_key:1, click_cnt:1    ← first key down
+evt:0, comb_key:2, click_cnt:1    ← key released
+evt:0, comb_key:3, click_cnt:1    ← second key down
+evt:0, comb_key:5, click_cnt:1    ← combination
+evt:0, comb_key:6, click_cnt:1    ← release
+```
+
+The `comb_key` field is a bitmask of simultaneously-held buttons.
+The physical safety button press that starts a job shows as the
+`comb_key:1 → 2` sequence, which is what follows `M222 S24` in
+the logs.

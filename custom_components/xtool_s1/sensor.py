@@ -202,9 +202,9 @@ SENSOR_DESCRIPTIONS: tuple[XToolS1SensorDescription, ...] = (
         translation_key=SENSOR_TOOL_RUNTIME,
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.HOURS,
-        # M2008.D — meaning unknown. Persistent across reboots, only ticks
-        # during active jobs, but much too small for total tool lifetime.
-        # Kept as a hidden diagnostic for future investigation.
+        # M2008.D = accumulated working seconds of the current tool TYPE
+        # (per-wattage counter, e.g. acc_40w_laserworktime in logs.txt).
+        # Persistent across reboots, only ticks during active jobs.
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -311,8 +311,9 @@ SENSOR_DESCRIPTIONS: tuple[XToolS1SensorDescription, ...] = (
         translation_key=SENSOR_LIGHT_BRIGHTNESS,
         native_unit_of_measurement="%",
         state_class=SensorStateClass.MEASUREMENT,
-        # Both M13 channels carry the same value via the app — read one.
-        value_fn=lambda s: s.light_brightness_a,
+        # Report 0 when the firmware has dimmed the light for standby
+        # (M15 S0), even though M13 still carries the configured value.
+        value_fn=lambda s: s.light_brightness_a if s.light_active else 0,
     ),
 )
 

@@ -55,15 +55,25 @@ class XToolS1FillLight(XToolS1HttpEntity, LightEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return whether the light is currently on."""
+        """Return whether the light is currently on.
+
+        The S1 dims the fill light for standby / pause via ``M15 A1 S0``
+        while keeping the *configured* brightness (``M13``) unchanged.
+        We combine both signals: the light is on only when the firmware
+        says it's active AND the configured brightness is > 0.
+        """
         data = self.coordinator.data
         if data is None or data.light_brightness_a is None:
             return None
-        return data.light_brightness_a > 0
+        return data.light_active and data.light_brightness_a > 0
 
     @property
     def brightness(self) -> int | None:
-        """Return the current brightness on HA's 0-255 scale."""
+        """Return the current brightness on HA's 0-255 scale.
+
+        Always returns the *configured* M13 value so that a toggle
+        after standby restores the previous brightness setting.
+        """
         data = self.coordinator.data
         if data is None or data.light_brightness_a is None:
             return None

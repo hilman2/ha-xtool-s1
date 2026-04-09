@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch
 
 from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode
@@ -277,3 +278,36 @@ async def test_light_turn_on_failure_raises_home_assistant_error(
                 {"entity_id": "light.xtool_s1_fill_light", "brightness": 200},
                 blocking=True,
             )
+
+
+@pytest.mark.asyncio
+async def test_m15_standby_turns_light_off(
+    hass: HomeAssistant, fake_s1_server_running
+) -> None:
+    """When the firmware pushes M15 A1 S0 (standby), the light goes off."""
+    entry = _entry(fake_s1_server_running.host)
+    entry.add_to_hass(hass)
+    with patch_ports(fake_s1_server_running):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # Running fixture has M13 A85 B72 — light should be ON initially.
+        state = hass.states.get("light.xtool_s1_fill_light")
+        assert state is not None
+        assert state.state == STATE_ON
+
+        # Firmware dims for standby.
+        await fake_s1_server_running.push("M15 A1 S0")
+        await asyncio.sleep(0.2)
+        await hass.async_block_till_done()
+
+        state = hass.states.get("light.xtool_s1_fill_light")
+        assert state.state == STATE_OFF
+
+        # Light comes back.
+        await fake_s1_server_running.push("M15 A1 S1")
+        await asyncio.sleep(0.2)
+        await hass.async_block_till_done()
+
+        state = hass.states.get("light.xtool_s1_fill_light")
+        assert state.state == STATE_ON

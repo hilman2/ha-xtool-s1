@@ -398,6 +398,43 @@ async def test_push_frames_m2008_m22_m323_m116_m98(fake_s1_server, hass) -> None
 
 
 @pytest.mark.asyncio
+async def test_push_m15_light_active_flag(fake_s1_server, hass) -> None:
+    """``M15 A1 S0`` sets light_active=False, ``M15 A1 S1`` restores it."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        # Default is True.
+        assert client.state.light_active is True
+        await fake_s1_server.push("M15 A1 S0")
+        await asyncio.sleep(0.1)
+        assert client.state.light_active is False
+        await fake_s1_server.push("M15 A1 S1")
+        await asyncio.sleep(0.1)
+        assert client.state.light_active is True
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_push_m15_without_s_field_ignored(fake_s1_server, hass) -> None:
+    """A bare ``M15`` without S0/S1 doesn't change the flag."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    client = XToolS1Client(fake_s1_server.host, session, port=fake_s1_server.port)
+    try:
+        await client.connect()
+        await fake_s1_server.push("M15 A1")
+        await asyncio.sleep(0.1)
+        assert client.state.light_active is True  # unchanged
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
 async def test_push_m22_empty_payload_ignored(fake_s1_server, hass) -> None:
     """An ``M22`` push with no payload should not change the state."""
     from homeassistant.helpers.aiohttp_client import async_get_clientsession

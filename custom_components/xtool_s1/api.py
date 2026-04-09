@@ -173,6 +173,12 @@ class XToolS1State:
     light_brightness_a: int | None = None
     light_brightness_b: int | None = None
 
+    # M15 light-active flag. The firmware pushes ``M15 A1 S1`` when the
+    # fill light is physically on and ``M15 A1 S0`` when it dims for
+    # standby / pause / idle. M13 keeps the *configured* brightness,
+    # M15 tells us the *actual* on/off state.
+    light_active: bool = True
+
     # Temperatures (°C) — currently only exposed via diagnostics
     temp_x: float | None = None
     temp_y: float | None = None
@@ -193,11 +199,13 @@ class XToolS1State:
     # Start, one from the physical button). Reset to 0 on M222 S3.
     m323_ack_count: int = 0
 
-    # M2008 lifetime statistics (verified against XCS app on 2026-04-09):
+    # M2008 lifetime statistics (verified against XCS app + logs.txt):
     #   working_seconds = M2008.A — total working time across all tools
-    #   session_count   = M2008.B — "Betriebszeiten"
+    #   session_count   = M2008.B — number of job starts
     #   standby_seconds = M2008.C — total standby time
-    #   tool_runtime_seconds = M2008.D — working seconds of the *current* tool
+    #   tool_runtime_seconds = M2008.D — accumulated working seconds of the
+    #       currently installed tool TYPE (e.g. acc_40w_laserworktime in
+    #       logs.txt). Per-wattage counter, persistent across reboots.
     working_seconds: int | None = None
     session_count: int | None = None
     standby_seconds: int | None = None
@@ -789,6 +797,16 @@ class XToolS1Client:
 
         if head == "M98":
             return _parse_m98_payload(tail)
+
+        if head == "M15":
+            # ``M15 A1 S0`` = light physically off (standby/pause)
+            # ``M15 A1 S1`` = light physically on
+            # Verified in XCS logs and Wireshark capture 2026-04-09.
+            if "S1" in tail:
+                return {"light_active": True}
+            if "S0" in tail:
+                return {"light_active": False}
+            return {}
 
         # v2: AP2 support — M9039 air-cleaner frames go here.
 
