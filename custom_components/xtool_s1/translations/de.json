@@ -134,7 +134,7 @@
         "name": "Standby-Zeit"
       },
       "session_count": {
-        "name": "Betriebszeiten"
+        "name": "Anzahl Starts"
       },
       "job_file": {
         "name": "Job-Datei"
