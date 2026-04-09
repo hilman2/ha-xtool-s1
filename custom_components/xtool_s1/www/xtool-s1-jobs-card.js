@@ -239,10 +239,7 @@ class XToolS1JobsCard extends HTMLElement {
         <div class="confirm-meta">
           <strong>Material:</strong> ${this._esc(job.material)}<br>
           <strong>Dicke:</strong> ${job.thickness_mm} mm<br>
-          <strong>Leistung:</strong> ${job.power_percent != null ? job.power_percent + " %" : "—"}<br>
-          <strong>Geschwindigkeit:</strong> ${job.speed_mm_per_s != null ? job.speed_mm_per_s + " mm/s" : "—"}<br>
           <strong>Laser-Modul:</strong> ${this._esc(job.laser_module || "—")}<br>
-          <strong>Modus:</strong> ${this._esc(job.laser_mode || "—")}<br>
         </div>
         <div class="confirm-warning">
           Verwendung auf eigene Gefahr. Bitte Material, Stärke und Laser-Einstellungen
@@ -264,8 +261,6 @@ class XToolS1JobsCard extends HTMLElement {
         <dl class="job-meta">
           <dt>Material</dt><dd>${this._esc(job.material)}</dd>
           <dt>Dicke</dt><dd>${job.thickness_mm} mm</dd>
-          <dt>Leistung</dt><dd>${job.power_percent != null ? job.power_percent + " %" : "—"}</dd>
-          <dt>Geschwindigkeit</dt><dd>${job.speed_mm_per_s != null ? job.speed_mm_per_s + " mm/s" : "—"}</dd>
           <dt>Laser</dt><dd>${this._esc(job.laser_module || "—")}</dd>
           <dt>Gespeichert</dt><dd>${new Date(job.saved_at).toLocaleString()}</dd>
         </dl>

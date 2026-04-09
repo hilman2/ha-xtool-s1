@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
@@ -56,9 +57,6 @@ async def _register_card(hass: HomeAssistant) -> None:  # pragma: no cover
     await hass.http.async_register_static_paths(
         [StaticPathConfig("/xtool_s1", str(Path(__file__).parent / "www"), False)]
     )
-    # Auto-load the card JS so the user doesn't have to add it manually.
-    from homeassistant.components.frontend import add_extra_js_url
-
     add_extra_js_url(hass, CARD_URL)
 
 
