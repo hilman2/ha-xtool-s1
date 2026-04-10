@@ -76,15 +76,7 @@ wsl -d Ubuntu -- bash -lc 'source ~/venvs/<project>/bin/activate && cd /mnt/d/Gi
 - Test execution assumes `pytest-xdist`; tests must stay isolated.
 - Coverage gate is 100%.
 
-## Windows and Deployment Notes
-
-### SSH / All-Inkl
-
-- Host: `w01a0e03.kasserver.com`
-- User: `ssh-w01a0e03`
-- SSH config alias: `allinkl`
-- Key: `~/.ssh/id_ed25519`
-- Auth requires both key and password
+## Windows Notes
 
 ### rsync on Windows
 
