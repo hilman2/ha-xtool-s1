@@ -28,7 +28,7 @@ from homeassistant.helpers import device_registry as dr
 import voluptuous as vol
 
 from .api import XToolS1ConnectionError
-from .const import DOMAIN, TOOL_FIRMWARE_NAMES
+from .const import DOMAIN, resolve_tool_name
 from .coordinator import XToolS1ConfigEntry
 from .store import SavedJob, XToolS1JobStore
 
@@ -72,9 +72,12 @@ def _extract_gcode_mode(gcode: str) -> str | None:
 
 def _current_laser_module(entry: XToolS1ConfigEntry) -> str | None:
     data = entry.runtime_data.coordinator.data
-    if data is None or data.firmware_aux_1 is None:
+    if data is None:
         return None
-    return TOOL_FIRMWARE_NAMES.get(data.firmware_aux_1, "Unknown")
+    return resolve_tool_name(
+        tool_power_w=data.tool_power_w,
+        firmware_fingerprint=data.firmware_aux_1,
+    )
 
 
 def _resolve_entry(

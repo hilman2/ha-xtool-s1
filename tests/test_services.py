@@ -103,8 +103,37 @@ def test_current_laser_module_no_data() -> None:
     entry.runtime_data.coordinator.data = None
     assert _current_laser_module(entry) is None
 
-    entry.runtime_data.coordinator.data = MagicMock(firmware_aux_1=None)
+    entry.runtime_data.coordinator.data = MagicMock(
+        tool_power_w=None,
+        firmware_aux_1=None,
+    )
     assert _current_laser_module(entry) is None
+
+
+def test_current_laser_module_prefers_power() -> None:
+    """The service-side tool resolver prefers M116.Y over firmware."""
+    from custom_components.xtool_s1.services import _current_laser_module
+
+    entry = MagicMock()
+    entry.runtime_data.coordinator.data = MagicMock(
+        tool_power_w=2,
+        firmware_aux_1="V40.32.009.2122.01 B1",
+    )
+
+    assert _current_laser_module(entry) == "Infrared 2 W"
+
+
+def test_current_laser_module_falls_back_to_firmware() -> None:
+    """Firmware remains the fallback when no power reading exists yet."""
+    from custom_components.xtool_s1.services import _current_laser_module
+
+    entry = MagicMock()
+    entry.runtime_data.coordinator.data = MagicMock(
+        tool_power_w=None,
+        firmware_aux_1="V40.32.009.2122.01 B1",
+    )
+
+    assert _current_laser_module(entry) == "Diode 40 W"
 
 
 # --- integration tests ---

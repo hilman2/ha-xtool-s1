@@ -50,8 +50,8 @@ from .const import (
     SENSOR_WORKING_TIME,
     STATUS_OPTIONS,
     STATUS_UNKNOWN,
-    TOOL_FIRMWARE_NAMES,
     WORK_STATE_MAP,
+    resolve_tool_name,
 )
 from .coordinator import XToolS1ConfigEntry, XToolS1Coordinator
 from .entity import XToolS1Entity
@@ -73,11 +73,11 @@ def _status_value(state: XToolS1State) -> str:
 
 
 def _tool_name(state: XToolS1State) -> str | None:
-    """Map the tool firmware fingerprint to a human-readable name."""
-    fingerprint = state.firmware_aux_1
-    if fingerprint is None:
-        return None
-    return TOOL_FIRMWARE_NAMES.get(fingerprint, "Unknown")
+    """Resolve the installed tool name from power first, then firmware."""
+    return resolve_tool_name(
+        tool_power_w=state.tool_power_w,
+        firmware_fingerprint=state.firmware_aux_1,
+    )
 
 
 def _last_job_outcome(state: XToolS1State) -> str | None:  # noqa: PLR0911
