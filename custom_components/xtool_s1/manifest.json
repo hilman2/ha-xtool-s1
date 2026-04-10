@@ -11,5 +11,5 @@
   "loggers": ["custom_components.xtool_s1"],
   "quality_scale": "platinum",
   "requirements": [],
-  "version": "1.11.0"
+  "version": "1.11.1"
 }
