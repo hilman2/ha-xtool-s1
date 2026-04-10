@@ -249,6 +249,21 @@ runs without interruption.
 | Job card shows no jobs | No jobs saved yet | Save a job after running one in XCS |
 | Start button does nothing | Laser not connected via WebSocket | Check connection sensor; restart integration if needed |
 
+### Debug logging
+
+For protocol-level troubleshooting, enable debug logging for the integration:
+
+```yaml
+logger:
+  logs:
+    custom_components.xtool_s1: debug
+```
+
+This also enables the dedicated raw protocol logger
+`custom_components.xtool_s1.api.raw`, which records unparsed HTTP and
+WebSocket traffic (including binary frames as hex) to help diagnose
+firmware quirks and missing parser coverage.
+
 ---
 
 ## Example automations

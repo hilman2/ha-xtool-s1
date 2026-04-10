@@ -80,6 +80,7 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_RAW_LOGGER = _LOGGER.getChild("raw")
 
 _CONNECT_TIMEOUT = 8.0
 _SEND_TIMEOUT = 5.0
@@ -439,6 +440,21 @@ class XToolS1Client:
 
         return _unsubscribe
 
+    def _log_raw_protocol(self, direction: str, payload: str | bytes) -> None:
+        """Emit raw protocol traffic when debug logging is enabled."""
+        if not _RAW_LOGGER.isEnabledFor(logging.DEBUG):
+            return
+        if isinstance(payload, bytes):
+            _RAW_LOGGER.debug(
+                "S1 %s raw %s: len=%d hex=%s",
+                self._host,
+                direction,
+                len(payload),
+                payload.hex(),
+            )
+            return
+        _RAW_LOGGER.debug("S1 %s raw %s: %r", self._host, direction, payload)
+
     # -- lifecycle ------------------------------------------------------
 
     async def connect(self) -> None:
@@ -643,6 +659,7 @@ class XToolS1Client:
             body_str = "".join(
                 (line if line.endswith("\n") else line + "\n") for line in gcode
             )
+        self._log_raw_protocol("http send /cmd", body_str)
         try:
             async with self._session.post(
                 f"{self._http_base}/cmd",
@@ -729,7 +746,9 @@ class XToolS1Client:
             ) as resp:
                 if resp.status != 200:
                     return None
-                text = (await resp.text()).strip()
+                text = await resp.text()
+                self._log_raw_protocol(f"http recv /system?action={action}", text)
+                text = text.strip()
                 return text or None
         except (TimeoutError, ClientError, OSError) as err:
             _LOGGER.debug("S1 %s /system?action=%s failed: %s", self._host, action, err)
@@ -762,6 +781,7 @@ class XToolS1Client:
         if not self.connected:
             raise XToolS1ConnectionError(f"S1 {self._host} not connected")
         assert self._ws is not None  # nosec - guarded by `connected` above
+        self._log_raw_protocol("ws send", text)
         try:
             await asyncio.wait_for(self._ws.send_str(text), timeout=_SEND_TIMEOUT)
         except (TimeoutError, ClientError, OSError) as err:
@@ -800,6 +820,7 @@ class XToolS1Client:
         body. We pull out the printable section and feed it back into
         the regular text-frame handler.
         """
+        self._log_raw_protocol("ws recv binary", payload)
         # latin-1 always succeeds (every byte maps to a codepoint), so
         # there's no UnicodeDecodeError path to guard.
         decoded = payload.decode("latin-1")
@@ -811,6 +832,7 @@ class XToolS1Client:
 
     def _handle_frame(self, text: str) -> None:
         """Parse a single text frame and emit a state update if anything changed."""
+        self._log_raw_protocol("ws recv text", text)
         text = text.strip()
         if not text:
             return

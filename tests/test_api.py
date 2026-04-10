@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 
 import pytest
 
@@ -1148,6 +1149,39 @@ def test_handle_binary_frame_no_mcode() -> None:
     client._handle_binary_frame(b"\x00\x00\x00")
     # State stays at the default empty snapshot.
     assert client.state.alarm_present is False
+
+
+def test_log_raw_protocol_text(caplog) -> None:
+    """Raw text frames are emitted on the dedicated debug logger."""
+    client = XToolS1Client("192.168.1.77", session=None, port=1)  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.xtool_s1.api.raw"):
+        client._log_raw_protocol("ws recv text", 'M2003 {"M222":"S3"}\n')
+
+    assert "S1 192.168.1.77 raw ws recv text" in caplog.text
+    assert 'M2003 {"M222":"S3"}\\n' in caplog.text
+
+
+def test_log_raw_protocol_binary(caplog) -> None:
+    """Binary payloads include both their size and hex representation."""
+    client = XToolS1Client("192.168.1.77", session=None, port=1)  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.xtool_s1.api.raw"):
+        client._log_raw_protocol("ws recv binary", b"\x00\x01M340 A2")
+
+    assert "S1 192.168.1.77 raw ws recv binary" in caplog.text
+    assert "len=9" in caplog.text
+    assert "hex=00014d333430204132" in caplog.text
+
+
+def test_log_raw_protocol_skips_without_debug(caplog) -> None:
+    """Normal log levels stay quiet so raw traffic only appears on demand."""
+    client = XToolS1Client("192.168.1.77", session=None, port=1)  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.INFO, logger="custom_components.xtool_s1.api.raw"):
+        client._log_raw_protocol("ws recv text", 'M2003 {"M222":"S3"}\n')
+
+    assert caplog.records == []
 
 
 @pytest.mark.asyncio
