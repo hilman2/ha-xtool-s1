@@ -26,6 +26,7 @@ from custom_components.xtool_s1.api import (
     discover_via_udp,
     parse_network,
 )
+from custom_components.xtool_s1.const import RAW_PROTOCOL_RING_BUFFER_SIZE
 
 from .conftest import load_fixture
 from .const import MOCK_FIRMWARE, MOCK_SERIAL
@@ -1148,6 +1149,41 @@ def test_handle_binary_frame_no_mcode() -> None:
     client._handle_binary_frame(b"\x00\x00\x00")
     # State stays at the default empty snapshot.
     assert client.state.alarm_present is False
+
+
+def test_raw_protocol_ring_buffer_records_text_and_binary() -> None:
+    """Raw frames are captured in JSON-ready form for later export."""
+    client = XToolS1Client("192.168.1.77", session=None, port=1)  # type: ignore[arg-type]
+    client._record_raw_protocol("ws recv text", 'M2003 {"M222":"S3"}\n')
+    client._record_raw_protocol("ws recv binary", b"\x00\x01M340 A2")
+
+    frames = client.raw_protocol_frames
+
+    assert len(frames) == 2
+    assert frames[0]["direction"] == "ws recv text"
+    assert frames[0]["payload_type"] == "text"
+    assert frames[0]["payload_text"] == 'M2003 {"M222":"S3"}\n'
+    assert frames[0]["captured_at"].endswith("Z")
+
+    assert frames[1]["direction"] == "ws recv binary"
+    assert frames[1]["payload_type"] == "bytes"
+    assert frames[1]["payload_length"] == 9
+    assert frames[1]["payload_hex"] == "00014d333430204132"
+    assert frames[1]["captured_at"].endswith("Z")
+
+
+def test_raw_protocol_ring_buffer_rotates() -> None:
+    """Only the newest N frames are kept in the in-memory ring buffer."""
+    client = XToolS1Client("192.168.1.77", session=None, port=1)  # type: ignore[arg-type]
+    total_frames = RAW_PROTOCOL_RING_BUFFER_SIZE + 3
+
+    for index in range(total_frames):
+        client._record_raw_protocol(f"frame {index}", f"M{index}")
+
+    frames = client.raw_protocol_frames
+    assert len(frames) == RAW_PROTOCOL_RING_BUFFER_SIZE
+    assert frames[0]["direction"] == "frame 3"
+    assert frames[-1]["direction"] == f"frame {total_frames - 1}"
 
 
 @pytest.mark.asyncio

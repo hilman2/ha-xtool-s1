@@ -38,14 +38,17 @@ Periodic side jobs:
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, replace
-from datetime import timedelta
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime, timedelta
+import json
 import logging
+from pathlib import Path
 import re
 import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -54,9 +57,11 @@ from .const import (
     COEXIST_KICK_LIMIT,
     COEXIST_KICK_WINDOW,
     COEXIST_RECOVERY_AFTER,
+    DEBUG_EXPORT_KEEP_FILES,
     DOMAIN,
     LOGFILE_MAX_SIZE,
     LOGFILE_POLL_INTERVAL,
+    RAW_PROTOCOL_RING_BUFFER_SIZE,
     RECONNECT_BACKOFF_SECONDS,
     STATS_POLL_INTERVAL,
     UPDATE_INTERVAL_SECONDS,
@@ -72,6 +77,31 @@ _LOGFILE_COUNTER_RE = re.compile(r"acc_(\w+)_laserworktime:(\d+);", re.IGNORECAS
 _LOGFILE_WORKTIME_RE = re.compile(r"acc_worktime:(\d+);")
 _LOGFILE_WORKCOUNT_RE = re.compile(r"acc_workcount:(\d+);")
 _LOGFILE_SYSRUNTIME_RE = re.compile(r"acc_sys_runtime:(\d+);")
+
+
+def _utcnow_iso() -> str:
+    """Return a compact UTC timestamp for diagnostics payloads."""
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _write_debug_export_file(
+    export_dir: Path,
+    entry_id: str,
+    filename: str,
+    payload: dict[str, Any],
+) -> None:
+    """Persist a JSON debug export and keep only a small rolling window."""
+    export_dir.mkdir(parents=True, exist_ok=True)
+    path = export_dir / filename
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    stale_exports = sorted(
+        export_dir.glob(f"xtool-s1-debug-{entry_id}-*.json"),
+        key=lambda candidate: candidate.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in stale_exports[DEBUG_EXPORT_KEEP_FILES:]:
+        stale.unlink(missing_ok=True)
 
 
 def _parse_logfile_counters(tail: str) -> dict[str, Any]:
@@ -150,6 +180,8 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
         self._http_failing_since: float | None = None
         self._last_stats_poll: float = 0.0
         self._last_logfile_poll: float = 0.0
+        self._last_debug_export_at: str | None = None
+        self._last_debug_export_url: str | None = None
 
     # -- public properties used by entities -----------------------------
 
@@ -167,6 +199,66 @@ class XToolS1Coordinator(DataUpdateCoordinator[XToolS1State]):
         is up or not.
         """
         return self._mode != MODE_OFFLINE
+
+    @property
+    def last_debug_export_at(self) -> str | None:
+        """Return when the last JSON debug export was written."""
+        return self._last_debug_export_at
+
+    @property
+    def last_debug_export_url(self) -> str | None:
+        """Return the relative HA download URL for the last debug export."""
+        return self._last_debug_export_url
+
+    def build_debug_export_payload(
+        self, *, generated_at: str | None = None
+    ) -> dict[str, Any]:
+        """Return a JSON-ready snapshot with current state and raw protocol frames."""
+        state = self.data
+        state_dict = asdict(state) if state is not None else None
+        return {
+            "generated_at": generated_at or _utcnow_iso(),
+            "entry": {
+                "entry_id": self.config_entry.entry_id,
+                "title": self.config_entry.title,
+                "unique_id": self.config_entry.unique_id,
+                "host": self.config_entry.data.get(CONF_HOST),
+            },
+            "client": {
+                "host": self.client.host,
+                "connected": self.client.connected,
+            },
+            "coordinator": {
+                "mode": self._mode,
+                "last_update_success": self.last_update_success,
+                "update_interval_seconds": (
+                    self.update_interval.total_seconds()
+                    if self.update_interval
+                    else None
+                ),
+            },
+            "state": state_dict,
+            "raw_protocol_ring_buffer_size": RAW_PROTOCOL_RING_BUFFER_SIZE,
+            "raw_protocol_ring_buffer": self.client.raw_protocol_frames,
+        }
+
+    async def async_create_debug_export(self) -> str:
+        """Persist the current debug snapshot to HA's local web directory."""
+        generated_at = _utcnow_iso()
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        filename = f"xtool-s1-debug-{self.config_entry.entry_id}-{timestamp}.json"
+        export_dir = Path(self.hass.config.path("www", "xtool_s1_debug"))
+        payload = self.build_debug_export_payload(generated_at=generated_at)
+        await self.hass.async_add_executor_job(
+            _write_debug_export_file,
+            export_dir,
+            self.config_entry.entry_id,
+            filename,
+            payload,
+        )
+        self._last_debug_export_at = generated_at
+        self._last_debug_export_url = f"/local/xtool_s1_debug/{filename}"
+        return self._last_debug_export_url
 
     @callback
     def _handle_push(self, state: XToolS1State) -> None:

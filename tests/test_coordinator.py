@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,13 +19,14 @@ from custom_components.xtool_s1.api import (
     XToolS1ConnectionError,
     XToolS1State,
 )
-from custom_components.xtool_s1.const import DOMAIN
+from custom_components.xtool_s1.const import DEBUG_EXPORT_KEEP_FILES, DOMAIN
 from custom_components.xtool_s1.coordinator import (
     MODE_COEXIST,
     MODE_NORMAL,
     MODE_OFFLINE,
     XToolS1Coordinator,
     _parse_logfile_counters,
+    _write_debug_export_file,
 )
 
 from .const import MOCK_HOST, MOCK_SERIAL
@@ -614,6 +617,23 @@ acc_workcount:10;
     result = _parse_logfile_counters(tail)
     assert result["working_seconds"] == 200
     assert result["session_count"] == 10
+
+
+def test_write_debug_export_file_keeps_only_recent_exports(tmp_path: Path) -> None:
+    """Old JSON exports are pruned so the local export directory stays bounded."""
+    payload = {"hello": "world"}
+
+    for index in range(DEBUG_EXPORT_KEEP_FILES + 1):
+        _write_debug_export_file(
+            tmp_path,
+            "entry-1",
+            f"xtool-s1-debug-entry-1-{index}.json",
+            payload,
+        )
+
+    exports = sorted(tmp_path.glob("xtool-s1-debug-entry-1-*.json"))
+    assert len(exports) == DEBUG_EXPORT_KEEP_FILES
+    assert json.loads(exports[-1].read_text(encoding="utf-8")) == payload
 
 
 @pytest.mark.asyncio

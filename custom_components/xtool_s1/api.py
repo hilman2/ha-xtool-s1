@@ -49,9 +49,11 @@ discovered from scratch in this project.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Callable
 import contextlib
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 import ipaddress
 import json
 import logging
@@ -72,6 +74,7 @@ from .const import (
     HTTP_PORT,
     MCODE_PAUSE,
     MCODE_RESUME,
+    RAW_PROTOCOL_RING_BUFFER_SIZE,
     SCAN_MAX_HOSTS,
     UDP_DISCOVERY_BROADCAST_ADDR,
     UDP_DISCOVERY_PORT,
@@ -220,6 +223,23 @@ class XToolS1State:
 
     # Raw last-update timestamp for diagnostics
     extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class RawProtocolFrame:
+    """Single raw HTTP/WS frame captured for diagnostics export."""
+
+    captured_at: str
+    direction: str
+    payload_type: str
+    payload_text: str | None = None
+    payload_hex: str | None = None
+    payload_length: int | None = None
+
+
+def _utcnow_iso() -> str:
+    """Return a compact UTC timestamp for diagnostics payloads."""
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 # --- parser helpers ---------------------------------------------------------
@@ -404,6 +424,9 @@ class XToolS1Client:
         self._state = XToolS1State()
         self._subscribers: list[StateCallback] = []
         self._lock = asyncio.Lock()
+        self._raw_protocol_frames: deque[RawProtocolFrame] = deque(
+            maxlen=RAW_PROTOCOL_RING_BUFFER_SIZE
+        )
 
     # -- properties -----------------------------------------------------
 
@@ -427,6 +450,21 @@ class XToolS1Client:
         """Return the latest immutable state snapshot."""
         return self._state
 
+    @property
+    def raw_protocol_frames(self) -> list[dict[str, Any]]:
+        """Return a JSON-ready copy of the raw protocol ring buffer."""
+        return [
+            {
+                "captured_at": frame.captured_at,
+                "direction": frame.direction,
+                "payload_type": frame.payload_type,
+                "payload_text": frame.payload_text,
+                "payload_hex": frame.payload_hex,
+                "payload_length": frame.payload_length,
+            }
+            for frame in self._raw_protocol_frames
+        ]
+
     # -- subscriptions --------------------------------------------------
 
     def on_state(self, callback: StateCallback) -> Callable[[], None]:
@@ -438,6 +476,28 @@ class XToolS1Client:
                 self._subscribers.remove(callback)
 
         return _unsubscribe
+
+    def _record_raw_protocol(self, direction: str, payload: str | bytes) -> None:
+        """Append raw HTTP/WS traffic to the in-memory diagnostics ring buffer."""
+        if isinstance(payload, bytes):
+            self._raw_protocol_frames.append(
+                RawProtocolFrame(
+                    captured_at=_utcnow_iso(),
+                    direction=direction,
+                    payload_type="bytes",
+                    payload_hex=payload.hex(),
+                    payload_length=len(payload),
+                )
+            )
+            return
+        self._raw_protocol_frames.append(
+            RawProtocolFrame(
+                captured_at=_utcnow_iso(),
+                direction=direction,
+                payload_type="text",
+                payload_text=payload,
+            )
+        )
 
     # -- lifecycle ------------------------------------------------------
 
@@ -643,6 +703,7 @@ class XToolS1Client:
             body_str = "".join(
                 (line if line.endswith("\n") else line + "\n") for line in gcode
             )
+        self._record_raw_protocol("http send /cmd", body_str)
         try:
             async with self._session.post(
                 f"{self._http_base}/cmd",
@@ -729,7 +790,9 @@ class XToolS1Client:
             ) as resp:
                 if resp.status != 200:
                     return None
-                text = (await resp.text()).strip()
+                text = await resp.text()
+                self._record_raw_protocol(f"http recv /system?action={action}", text)
+                text = text.strip()
                 return text or None
         except (TimeoutError, ClientError, OSError) as err:
             _LOGGER.debug("S1 %s /system?action=%s failed: %s", self._host, action, err)
@@ -762,6 +825,7 @@ class XToolS1Client:
         if not self.connected:
             raise XToolS1ConnectionError(f"S1 {self._host} not connected")
         assert self._ws is not None  # nosec - guarded by `connected` above
+        self._record_raw_protocol("ws send", text)
         try:
             await asyncio.wait_for(self._ws.send_str(text), timeout=_SEND_TIMEOUT)
         except (TimeoutError, ClientError, OSError) as err:
@@ -800,6 +864,7 @@ class XToolS1Client:
         body. We pull out the printable section and feed it back into
         the regular text-frame handler.
         """
+        self._record_raw_protocol("ws recv binary", payload)
         # latin-1 always succeeds (every byte maps to a codepoint), so
         # there's no UnicodeDecodeError path to guard.
         decoded = payload.decode("latin-1")
@@ -811,6 +876,7 @@ class XToolS1Client:
 
     def _handle_frame(self, text: str) -> None:
         """Parse a single text frame and emit a state update if anything changed."""
+        self._record_raw_protocol("ws recv text", text)
         text = text.strip()
         if not text:
             return

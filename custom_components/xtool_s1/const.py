@@ -49,6 +49,12 @@ LOGFILE_POLL_INTERVAL: Final = 600.0
 # the counters fresh. 1 MB is plenty for the last few boot cycles.
 LOGFILE_MAX_SIZE: Final = 1_000_000
 
+# Keep the last N raw HTTP/WS frames in memory for on-demand debug exports.
+RAW_PROTOCOL_RING_BUFFER_SIZE: Final = 250
+
+# Limit how many JSON debug exports we keep under HA's /local directory.
+DEBUG_EXPORT_KEEP_FILES: Final = 5
+
 # Time to wait for the first M2003 reply during config-flow validation.
 CONFIG_FLOW_PROBE_TIMEOUT: Final = 8.0
 
@@ -113,6 +119,7 @@ LIGHT_FILL_LIGHT: Final = "fill_light"
 BUTTON_STOP: Final = "stop"
 BUTTON_PAUSE: Final = "pause"
 BUTTON_RESUME: Final = "resume"
+BUTTON_CREATE_DEBUG_EXPORT: Final = "create_debug_export"
 
 # Status enum values reported via the `status` sensor.
 # These MUST be lowercase, snake_case, and matched 1:1 in

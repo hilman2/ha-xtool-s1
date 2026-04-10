@@ -115,6 +115,7 @@ All entities are created automatically per device.
 | Button | Stop | Abort the running job |
 | Button | Pause | Pause the running job |
 | Button | Resume | Resume a paused job |
+| Button | Create debug export | Write the current raw protocol ring buffer to a downloadable JSON file *(diagnostic)* |
 
 ---
 
@@ -248,6 +249,22 @@ runs without interruption.
 | "Connection" sensor stays off | Wrong IP or laser not on network | Reconfigure with correct IP |
 | Job card shows no jobs | No jobs saved yet | Save a job after running one in XCS |
 | Start button does nothing | Laser not connected via WebSocket | Check connection sensor; restart integration if needed |
+
+### Debug export
+
+For protocol-level troubleshooting, use the device button
+**Create debug export**. It writes a JSON snapshot under Home
+Assistant's `/local/xtool_s1_debug/` directory and opens a persistent
+notification with a direct download link.
+
+Each export contains:
+
+- The current coordinator mode and parsed device state
+- The last 250 raw HTTP / WebSocket frames from an in-memory ring buffer
+- Binary WebSocket payloads as hex so firmware quirks stay visible
+
+The ring buffer rotates automatically in memory, so normal operation
+does not spam the Home Assistant log.
 
 ---
 
