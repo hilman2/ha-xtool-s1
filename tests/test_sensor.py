@@ -213,17 +213,33 @@ def test_seconds_to_hours_none_branch() -> None:
 
 
 def test_tool_name_lookup() -> None:
-    """The tool-name helper maps the M1199 fingerprint to a friendly label."""
+    """The tool-name helper prefers wattage and falls back to firmware."""
     from custom_components.xtool_s1.api import XToolS1State
     from custom_components.xtool_s1.sensor import _tool_name
 
-    # No fingerprint → None
+    # No signal yet → None
     assert _tool_name(XToolS1State()) is None
-    # Known diode 40 W
+
+    # Power is the preferred source because M116.Y is stable for S1 heads.
+    assert _tool_name(XToolS1State(tool_power_w=40)) == "Diode 40 W"
+    assert (
+        _tool_name(XToolS1State(tool_power_w=2, firmware_aux_1="V99.99.999"))
+        == "Infrared 2 W"
+    )
+    assert _tool_name(XToolS1State(tool_power_w=20)) == "Laser 20 W"
+
+    # Conflicting stale firmware must not override the fresh power reading.
+    assert (
+        _tool_name(XToolS1State(tool_power_w=2, firmware_aux_1="V40.32.009.2122.01 B1"))
+        == "Infrared 2 W"
+    )
+
+    # Firmware remains the fallback when power is missing.
     assert (
         _tool_name(XToolS1State(firmware_aux_1="V40.32.009.2122.01 B1")) == "Diode 40 W"
     )
-    # Unknown fingerprint → "Unknown"
+
+    # Unknown fingerprint without a wattage still stays unknown.
     assert _tool_name(XToolS1State(firmware_aux_1="V99.99.999")) == "Unknown"
 
 

@@ -189,9 +189,38 @@ MCODE_STOP: Final = "M108"
 MCODE_PAUSE: Final = "M22 S1"
 MCODE_RESUME: Final = "M22 S2"
 
+# Tool-power -> human-readable tool name lookup.
+# ``M116.Y`` is the verified wattage field and is available even when a
+# tool-firmware fingerprint is unknown. Verified names are used where we
+# have captures; the remaining entries intentionally stay wattage-generic.
+TOOL_POWER_NAMES: Final[dict[int, str]] = {
+    2: "Infrared 2 W",
+    3: "Laser 3 W",
+    10: "Laser 10 W",
+    20: "Laser 20 W",
+    40: "Diode 40 W",
+}
+
 # Tool-firmware fingerprint -> human-readable tool name lookup.
 # Populated by observation; expand as new tool variants are tested.
 TOOL_FIRMWARE_NAMES: Final[dict[str, str]] = {
     "V40.32.009.2122.01 B1": "Diode 40 W",
     "V40.32.008.2122.01 B3": "Infrared 2 W",
 }
+
+
+def resolve_tool_name(
+    *, tool_power_w: int | None, firmware_fingerprint: str | None
+) -> str | None:
+    """Resolve the installed tool name from the best available signal.
+
+    The preferred signal is ``M116.Y`` because the protocol docs confirm it
+    is the head wattage and the S1 firmware itself stores per-tool counters
+    by wattage bucket. ``M1199`` remains a useful fallback when wattage is
+    absent and still acts as a diagnostic fingerprint for known heads.
+    """
+    if tool_power_w is not None:
+        return TOOL_POWER_NAMES.get(tool_power_w, f"Laser {tool_power_w} W")
+    if firmware_fingerprint is None:
+        return None
+    return TOOL_FIRMWARE_NAMES.get(firmware_fingerprint, "Unknown")
