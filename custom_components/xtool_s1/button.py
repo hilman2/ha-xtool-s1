@@ -30,7 +30,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import XToolS1Client, XToolS1ConnectionError
 from .const import BUTTON_PAUSE, BUTTON_RESUME, BUTTON_STOP
-from .coordinator import XToolS1ConfigEntry
+from .coordinator import XToolS1ConfigEntry, XToolS1Coordinator
 from .entity import XToolS1HttpEntity
 
 PARALLEL_UPDATES = 1
@@ -81,7 +81,7 @@ class XToolS1Button(XToolS1HttpEntity, ButtonEntity):
 
     def __init__(
         self,
-        coordinator,
+        coordinator: XToolS1Coordinator,
         description: XToolS1ButtonDescription,
     ) -> None:
         self._attr_translation_key = description.translation_key or description.key

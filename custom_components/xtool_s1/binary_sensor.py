@@ -24,7 +24,7 @@ from .const import (
     BINARY_SENSOR_RUNNING,
     RUNNING_WORK_STATES,
 )
-from .coordinator import XToolS1ConfigEntry
+from .coordinator import XToolS1ConfigEntry, XToolS1Coordinator
 from .entity import XToolS1Entity
 
 PARALLEL_UPDATES = 0
@@ -147,7 +147,7 @@ class XToolS1BinarySensor(XToolS1Entity, BinarySensorEntity):
 
     def __init__(
         self,
-        coordinator,
+        coordinator: XToolS1Coordinator,
         description: XToolS1BinarySensorDescription,
     ) -> None:
         self._attr_translation_key = description.translation_key or description.key

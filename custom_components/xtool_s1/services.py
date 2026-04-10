@@ -76,14 +76,16 @@ def _get_entry(hass: HomeAssistant) -> XToolS1ConfigEntry:
     entries = hass.config_entries.async_entries(DOMAIN)
     if not entries:
         raise HomeAssistantError("No xTool S1 device configured")
-    return entries[0]  # type: ignore[return-value]
+    entry: XToolS1ConfigEntry = entries[0]
+    return entry
 
 
 def _get_store(hass: HomeAssistant) -> XToolS1JobStore:
     key = f"{DOMAIN}_job_store"
     if key not in hass.data:
         hass.data[key] = XToolS1JobStore(hass)
-    return hass.data[key]
+    store: XToolS1JobStore = hass.data[key]
+    return store
 
 
 # --- service handlers ---
@@ -176,7 +178,7 @@ async def async_list_jobs(call: ServiceCall) -> ServiceResponse:
     """Return all saved jobs with metadata (no gcode body)."""
     store = _get_store(call.hass)
     jobs = await store.async_list_jobs()
-    return {"jobs": jobs}
+    return {"jobs": jobs}  # type: ignore[dict-item]
 
 
 # --- schemas ---

@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.light import (
-    ATTR_BRIGHTNESS,
-    ColorMode,
-    LightEntity,
-)
+from homeassistant.components.light import ATTR_BRIGHTNESS, LightEntity
+from homeassistant.components.light.const import ColorMode
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback

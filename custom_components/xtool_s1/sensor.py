@@ -53,7 +53,7 @@ from .const import (
     TOOL_FIRMWARE_NAMES,
     WORK_STATE_MAP,
 )
-from .coordinator import XToolS1ConfigEntry
+from .coordinator import XToolS1ConfigEntry, XToolS1Coordinator
 from .entity import XToolS1Entity
 
 PARALLEL_UPDATES = 0  # coordinator-driven, no parallel writes from entities
@@ -337,7 +337,7 @@ class XToolS1Sensor(XToolS1Entity, SensorEntity):
 
     def __init__(
         self,
-        coordinator,
+        coordinator: XToolS1Coordinator,
         description: XToolS1SensorDescription,
     ) -> None:
         self._attr_translation_key = description.translation_key or description.key
