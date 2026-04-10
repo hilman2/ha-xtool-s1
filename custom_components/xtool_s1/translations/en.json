@@ -189,6 +189,9 @@
       },
       "resume": {
         "name": "Resume"
+      },
+      "create_debug_export": {
+        "name": "Create debug export"
       }
     }
   },

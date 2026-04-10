@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
-import logging
 
 import pytest
 
@@ -27,6 +26,7 @@ from custom_components.xtool_s1.api import (
     discover_via_udp,
     parse_network,
 )
+from custom_components.xtool_s1.const import RAW_PROTOCOL_RING_BUFFER_SIZE
 
 from .conftest import load_fixture
 from .const import MOCK_FIRMWARE, MOCK_SERIAL
@@ -1151,37 +1151,39 @@ def test_handle_binary_frame_no_mcode() -> None:
     assert client.state.alarm_present is False
 
 
-def test_log_raw_protocol_text(caplog) -> None:
-    """Raw text frames are emitted on the dedicated debug logger."""
+def test_raw_protocol_ring_buffer_records_text_and_binary() -> None:
+    """Raw frames are captured in JSON-ready form for later export."""
     client = XToolS1Client("192.168.1.77", session=None, port=1)  # type: ignore[arg-type]
+    client._record_raw_protocol("ws recv text", 'M2003 {"M222":"S3"}\n')
+    client._record_raw_protocol("ws recv binary", b"\x00\x01M340 A2")
 
-    with caplog.at_level(logging.DEBUG, logger="custom_components.xtool_s1.api.raw"):
-        client._log_raw_protocol("ws recv text", 'M2003 {"M222":"S3"}\n')
+    frames = client.raw_protocol_frames
 
-    assert "S1 192.168.1.77 raw ws recv text" in caplog.text
-    assert 'M2003 {"M222":"S3"}\\n' in caplog.text
+    assert len(frames) == 2
+    assert frames[0]["direction"] == "ws recv text"
+    assert frames[0]["payload_type"] == "text"
+    assert frames[0]["payload_text"] == 'M2003 {"M222":"S3"}\n'
+    assert frames[0]["captured_at"].endswith("Z")
+
+    assert frames[1]["direction"] == "ws recv binary"
+    assert frames[1]["payload_type"] == "bytes"
+    assert frames[1]["payload_length"] == 9
+    assert frames[1]["payload_hex"] == "00014d333430204132"
+    assert frames[1]["captured_at"].endswith("Z")
 
 
-def test_log_raw_protocol_binary(caplog) -> None:
-    """Binary payloads include both their size and hex representation."""
+def test_raw_protocol_ring_buffer_rotates() -> None:
+    """Only the newest N frames are kept in the in-memory ring buffer."""
     client = XToolS1Client("192.168.1.77", session=None, port=1)  # type: ignore[arg-type]
+    total_frames = RAW_PROTOCOL_RING_BUFFER_SIZE + 3
 
-    with caplog.at_level(logging.DEBUG, logger="custom_components.xtool_s1.api.raw"):
-        client._log_raw_protocol("ws recv binary", b"\x00\x01M340 A2")
+    for index in range(total_frames):
+        client._record_raw_protocol(f"frame {index}", f"M{index}")
 
-    assert "S1 192.168.1.77 raw ws recv binary" in caplog.text
-    assert "len=9" in caplog.text
-    assert "hex=00014d333430204132" in caplog.text
-
-
-def test_log_raw_protocol_skips_without_debug(caplog) -> None:
-    """Normal log levels stay quiet so raw traffic only appears on demand."""
-    client = XToolS1Client("192.168.1.77", session=None, port=1)  # type: ignore[arg-type]
-
-    with caplog.at_level(logging.INFO, logger="custom_components.xtool_s1.api.raw"):
-        client._log_raw_protocol("ws recv text", 'M2003 {"M222":"S3"}\n')
-
-    assert caplog.records == []
+    frames = client.raw_protocol_frames
+    assert len(frames) == RAW_PROTOCOL_RING_BUFFER_SIZE
+    assert frames[0]["direction"] == "frame 3"
+    assert frames[-1]["direction"] == f"frame {total_frames - 1}"
 
 
 @pytest.mark.asyncio

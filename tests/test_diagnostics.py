@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.xtool_s1.const import DOMAIN
+from custom_components.xtool_s1.const import DOMAIN, RAW_PROTOCOL_RING_BUFFER_SIZE
 from custom_components.xtool_s1.diagnostics import (
     async_get_config_entry_diagnostics,
 )
@@ -42,5 +42,8 @@ async def test_diagnostics_redact_sensitive_fields(
     assert diag["client"]["connected"] is True
     assert diag["coordinator"]["last_update_success"] is True
     assert diag["coordinator"]["update_interval_seconds"] == 30.0
+    assert diag["coordinator"]["mode"] == "normal"
     # The state snapshot exists and contains the work_state_raw field.
     assert "work_state_raw" in diag["state"]
+    assert diag["raw_protocol_ring_buffer_size"] == RAW_PROTOCOL_RING_BUFFER_SIZE
+    assert diag["raw_protocol_ring_buffer"]

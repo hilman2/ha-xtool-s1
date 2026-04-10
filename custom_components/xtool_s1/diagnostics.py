@@ -9,6 +9,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 
+from .const import RAW_PROTOCOL_RING_BUFFER_SIZE
 from .coordinator import XToolS1ConfigEntry
 
 TO_REDACT = {CONF_HOST, "serial_number", "host"}
@@ -36,6 +37,7 @@ async def async_get_config_entry_diagnostics(
             "connected": runtime.client.connected,
         },
         "coordinator": {
+            "mode": coordinator.mode,
             "last_update_success": coordinator.last_update_success,
             "update_interval_seconds": (
                 coordinator.update_interval.total_seconds()
@@ -44,4 +46,8 @@ async def async_get_config_entry_diagnostics(
             ),
         },
         "state": async_redact_data(state_dict, TO_REDACT) if state_dict else None,
+        "raw_protocol_ring_buffer_size": RAW_PROTOCOL_RING_BUFFER_SIZE,
+        "raw_protocol_ring_buffer": runtime.client.raw_protocol_frames,
+        "last_debug_export_at": coordinator.last_debug_export_at,
+        "last_debug_export_url": coordinator.last_debug_export_url,
     }

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+import json
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
@@ -12,12 +14,14 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.xtool_s1.api import XToolS1ConnectionError
 from custom_components.xtool_s1.const import (
+    BUTTON_CREATE_DEBUG_EXPORT,
     BUTTON_PAUSE,
     BUTTON_RESUME,
     BUTTON_STOP,
     DOMAIN,
     MCODE_PAUSE,
     MCODE_RESUME,
+    RAW_PROTOCOL_RING_BUFFER_SIZE,
 )
 
 from .conftest import patch_ports
@@ -37,14 +41,19 @@ def _entry(host: str) -> MockConfigEntry:
 async def test_button_platform_creates_three_buttons(
     hass: HomeAssistant, fake_s1_server
 ) -> None:
-    """The button platform exposes Stop, Pause and Resume."""
+    """The button platform exposes control buttons plus the debug export."""
     entry = _entry(fake_s1_server.host)
     entry.add_to_hass(hass)
     with patch_ports(fake_s1_server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    for key in (BUTTON_STOP, BUTTON_PAUSE, BUTTON_RESUME):
+    for key in (
+        BUTTON_STOP,
+        BUTTON_PAUSE,
+        BUTTON_RESUME,
+        BUTTON_CREATE_DEBUG_EXPORT,
+    ):
         state = hass.states.get(f"button.xtool_s1_{key}")
         assert state is not None, f"button.xtool_s1_{key} missing"
 
@@ -113,6 +122,64 @@ async def test_resume_button_press_sends_best_effort_m22_s2(
             lambda line: line == MCODE_RESUME, timeout=1.0
         )
         assert match == MCODE_RESUME
+
+
+@pytest.mark.asyncio
+async def test_debug_export_button_creates_json_snapshot(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """Pressing the diagnostic button writes a JSON export and shows a link."""
+    entry = _entry(fake_s1_server.host)
+    entry.add_to_hass(hass)
+    with patch_ports(fake_s1_server):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        with patch(
+            "custom_components.xtool_s1.button.persistent_notification.async_create"
+        ) as mock_notify:
+            await hass.services.async_call(
+                "button",
+                "press",
+                {"entity_id": "button.xtool_s1_create_debug_export"},
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+    export_dir = Path(hass.config.path("www", "xtool_s1_debug"))
+    exports = sorted(export_dir.glob(f"xtool-s1-debug-{entry.entry_id}-*.json"))
+    assert len(exports) == 1
+
+    payload = json.loads(exports[0].read_text(encoding="utf-8"))
+    assert payload["raw_protocol_ring_buffer_size"] == RAW_PROTOCOL_RING_BUFFER_SIZE
+    assert payload["raw_protocol_ring_buffer"]
+    assert payload["state"]["serial_number"] == MOCK_SERIAL
+
+    mock_notify.assert_called_once()
+    kwargs = mock_notify.call_args.kwargs
+    assert kwargs["title"] == "xTool S1 debug export ready"
+    assert "/local/xtool_s1_debug/" in kwargs["message"]
+
+    state = hass.states.get("button.xtool_s1_create_debug_export")
+    assert state is not None
+    assert state.attributes["download_url"].startswith("/local/xtool_s1_debug/")
+    assert "generated_at" in state.attributes
+
+
+@pytest.mark.asyncio
+async def test_debug_export_button_wraps_write_errors() -> None:
+    """A failing JSON export is surfaced as HomeAssistantError."""
+    from custom_components.xtool_s1.button import XToolS1DebugExportButton
+
+    coordinator = MagicMock()
+    coordinator.async_create_debug_export = AsyncMock(side_effect=OSError("disk full"))
+    button = XToolS1DebugExportButton.__new__(XToolS1DebugExportButton)
+    button._attr_translation_key = BUTTON_CREATE_DEBUG_EXPORT
+    button.coordinator = coordinator
+    button.hass = MagicMock()
+
+    with pytest.raises(HomeAssistantError, match="debug export"):
+        await button.async_press()
 
 
 @pytest.mark.asyncio
