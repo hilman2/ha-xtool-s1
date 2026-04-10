@@ -196,8 +196,8 @@ MCODE_RESUME: Final = "M22 S2"
 TOOL_POWER_NAMES: Final[dict[int, str]] = {
     2: "Infrared 2 W",
     3: "Laser 3 W",
-    10: "Laser 10 W",
-    20: "Laser 20 W",
+    10: "Diode 10 W",
+    20: "Diode 20 W",
     40: "Diode 40 W",
 }
 
