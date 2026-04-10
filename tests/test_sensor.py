@@ -226,7 +226,8 @@ def test_tool_name_lookup() -> None:
         _tool_name(XToolS1State(tool_power_w=2, firmware_aux_1="V99.99.999"))
         == "Infrared 2 W"
     )
-    assert _tool_name(XToolS1State(tool_power_w=20)) == "Laser 20 W"
+    assert _tool_name(XToolS1State(tool_power_w=10)) == "Diode 10 W"
+    assert _tool_name(XToolS1State(tool_power_w=20)) == "Diode 20 W"
 
     # Conflicting stale firmware must not override the fresh power reading.
     assert (
