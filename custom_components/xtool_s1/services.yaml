@@ -38,6 +38,15 @@ save_job:
           step: 0.1
           unit_of_measurement: mm
           mode: box
+    device_id:
+      name: Device
+      description: >-
+        Which xTool S1 to download from. Required when multiple
+        devices are configured; auto-selected with a single device.
+      required: false
+      selector:
+        device:
+          integration: xtool_s1
 
 start_job:
   name: Start a saved job
@@ -60,6 +69,15 @@ start_job:
       required: true
       selector:
         boolean:
+    device_id:
+      name: Device
+      description: >-
+        Which xTool S1 to send the job to. Required when multiple
+        devices are configured; auto-selected with a single device.
+      required: false
+      selector:
+        device:
+          integration: xtool_s1
 
 delete_job:
   name: Delete a saved job
@@ -71,7 +89,26 @@ delete_job:
       required: true
       selector:
         text:
+    device_id:
+      name: Device
+      description: >-
+        Which xTool S1 the job belongs to. Required when multiple
+        devices are configured; auto-selected with a single device.
+      required: false
+      selector:
+        device:
+          integration: xtool_s1
 
 list_jobs:
   name: List saved jobs
   description: Return all saved jobs with their metadata.
+  fields:
+    device_id:
+      name: Device
+      description: >-
+        Filter jobs by device. If omitted, jobs from all devices
+        are returned.
+      required: false
+      selector:
+        device:
+          integration: xtool_s1

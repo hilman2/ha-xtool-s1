@@ -1,9 +1,14 @@
 """Persistent storage for saved xTool S1 jobs.
 
-Jobs are stored as a JSON dict keyed by title, each containing the
-gcode body and user-supplied metadata (material, thickness,
-description). The HA Store helper writes to
-``config/.storage/xtool_s1_jobs``.
+Jobs are stored as a JSON dict keyed by ``serial/title``, each
+containing the gcode body and user-supplied metadata (material,
+thickness, description).  The composite key ensures that two devices
+can each have a job with the same title without colliding.
+
+Legacy stores (pre-multi-device) used plain *title* keys.  These are
+migrated transparently on first load.
+
+The HA Store helper writes to ``config/.storage/xtool_s1_jobs``.
 """
 
 from __future__ import annotations
@@ -17,6 +22,11 @@ from homeassistant.helpers.storage import Store
 
 STORAGE_KEY = "xtool_s1_jobs"
 STORAGE_VERSION = 1
+
+
+def _make_key(serial: str, title: str) -> str:
+    """Build the composite storage key ``serial/title``."""
+    return f"{serial}/{title}"
 
 
 @dataclass(frozen=True)
@@ -66,19 +76,42 @@ class XToolS1JobStore:
         if self._data is None:
             raw = await self._store.async_load()
             self._data = raw if isinstance(raw, dict) else {}
+            await self._migrate_legacy_keys()
         return {k: SavedJob.from_dict(v) for k, v in self._data.items()}
 
-    async def async_save_job(self, job: SavedJob) -> None:
-        await self.async_load()  # idempotent — returns cached after first call
+    async def _migrate_legacy_keys(self) -> None:
+        """Migrate old flat title keys to composite ``serial/title`` keys."""
         assert self._data is not None
-        self._data[job.title] = job.to_dict()
+        to_add: dict[str, dict[str, Any]] = {}
+        to_remove: list[str] = []
+        for key, value in self._data.items():
+            if "/" not in key:
+                serial = value.get("serial_number") or "unknown"
+                to_add[_make_key(serial, key)] = value
+                to_remove.append(key)
+        if not to_remove:
+            return
+        for key in to_remove:
+            del self._data[key]
+        self._data.update(to_add)
         await self._store.async_save(self._data)
 
-    async def async_get_job(self, title: str) -> SavedJob | None:
-        jobs = await self.async_load()
-        return jobs.get(title)
+    async def async_save_job(self, job: SavedJob) -> None:
+        await self.async_load()
+        assert self._data is not None
+        key = _make_key(job.serial_number or "unknown", job.title)
+        self._data[key] = job.to_dict()
+        await self._store.async_save(self._data)
 
-    async def async_list_jobs(self) -> list[dict[str, Any]]:
+    async def async_get_job(self, title: str, serial_number: str) -> SavedJob | None:
+        """Look up a saved job by title and device serial."""
+        jobs = await self.async_load()
+        return jobs.get(_make_key(serial_number, title))
+
+    async def async_list_jobs(
+        self, serial_number: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return all saved jobs, optionally filtered by device serial."""
         jobs = await self.async_load()
         return [
             {
@@ -86,6 +119,7 @@ class XToolS1JobStore:
                 "description": j.description,
                 "material": j.material,
                 "thickness_mm": j.thickness_mm,
+                "serial_number": j.serial_number,
                 "laser_module": j.laser_module,
                 "power_percent": j.power_percent,
                 "speed_mm_per_s": j.speed_mm_per_s,
@@ -93,15 +127,17 @@ class XToolS1JobStore:
                 "saved_at": j.saved_at,
             }
             for j in jobs.values()
+            if serial_number is None or j.serial_number == serial_number
         ]
 
-    async def async_delete_job(self, title: str) -> bool:
-        """Delete a saved job by title. Returns True if found."""
+    async def async_delete_job(self, title: str, serial_number: str) -> bool:
+        """Delete a saved job by title and device serial."""
         await self.async_load()
         assert self._data is not None
-        if title not in self._data:
+        key = _make_key(serial_number, title)
+        if key not in self._data:
             return False
-        del self._data[title]
+        del self._data[key]
         await self._store.async_save(self._data)
         return True
 

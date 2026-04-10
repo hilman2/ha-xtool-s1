@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -19,7 +20,7 @@ from custom_components.xtool_s1.services import (
 )
 
 from .conftest import patch_ports
-from .const import MOCK_SERIAL
+from .const import MOCK_SERIAL, MOCK_SERIAL_2
 
 SAMPLE_GCODE = """\
 # date=2026_04_09
@@ -31,11 +32,11 @@ G1X20Y20 S10 F1680
 """
 
 
-def _entry(host: str) -> MockConfigEntry:
+def _entry(host: str, serial: str = MOCK_SERIAL) -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="x",
-        unique_id=MOCK_SERIAL,
+        unique_id=serial,
         data={CONF_HOST: host},
     )
 
@@ -109,13 +110,19 @@ def test_current_laser_module_no_data() -> None:
 # --- integration tests ---
 
 
-async def _setup_and_save(hass, server, title="rect", material="Wood", thickness=3.0):
-    """Helper: set up integration + save a job."""
-    entry = _entry(server.host)
+async def _setup_entry(hass, server, serial=MOCK_SERIAL):
+    """Set up a single config entry and return it."""
+    entry = _entry(server.host, serial)
     entry.add_to_hass(hass)
     with patch_ports(server):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+    return entry
+
+
+async def _setup_and_save(hass, server, title="rect", material="Wood", thickness=3.0):
+    """Helper: set up integration + save a job."""
+    entry = await _setup_entry(hass, server)
 
     with patch(
         "custom_components.xtool_s1.api.XToolS1Client.download_job",
@@ -155,6 +162,7 @@ async def test_save_and_list_job(hass: HomeAssistant, fake_s1_server) -> None:
     assert job["power_percent"] == 1.0
     assert job["speed_mm_per_s"] == 28.0
     assert job["laser_mode"] == "cut"
+    assert job["serial_number"] == MOCK_SERIAL
 
 
 @pytest.mark.asyncio
@@ -420,3 +428,266 @@ def test_register_services_idempotent(hass: HomeAssistant) -> None:
     assert hass.services.has_service(DOMAIN, "start_job")
     assert hass.services.has_service(DOMAIN, "delete_job")
     assert hass.services.has_service(DOMAIN, "list_jobs")
+
+
+# --- multi-device tests ---
+
+
+def _get_device_id(hass: HomeAssistant, serial: str) -> str:
+    """Look up the HA device registry ID for a given serial."""
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, serial)})
+    assert device is not None, f"No device found for serial {serial}"
+    return device.id
+
+
+@pytest.mark.asyncio
+async def test_multi_device_save_and_list(hass: HomeAssistant, fake_s1_server) -> None:
+    """Two devices can each save a job with the same title."""
+    # Set up device A
+    await _setup_entry(hass, fake_s1_server, serial=MOCK_SERIAL)
+    dev_id_a = _get_device_id(hass, MOCK_SERIAL)
+
+    # Set up device B (reuses same fake server for simplicity)
+    entry_b = _entry(fake_s1_server.host, serial=MOCK_SERIAL_2)
+    entry_b.add_to_hass(hass)
+    with patch_ports(fake_s1_server):
+        assert await hass.config_entries.async_setup(entry_b.entry_id)
+        await hass.async_block_till_done()
+    dev_id_b = _get_device_id(hass, MOCK_SERIAL_2)
+
+    # Save same-titled job on both devices
+    for dev_id in (dev_id_a, dev_id_b):
+        with patch(
+            "custom_components.xtool_s1.api.XToolS1Client.download_job",
+            new_callable=AsyncMock,
+            return_value=SAMPLE_GCODE,
+        ):
+            await hass.services.async_call(
+                DOMAIN,
+                "save_job",
+                {
+                    "title": "shared_name",
+                    "description": "test",
+                    "material": "Wood",
+                    "thickness_mm": 3.0,
+                    "device_id": dev_id,
+                },
+                blocking=True,
+            )
+
+    # list_jobs without filter → both
+    result = await hass.services.async_call(
+        DOMAIN, "list_jobs", {}, blocking=True, return_response=True
+    )
+    assert len(result["jobs"]) == 2
+
+    # list_jobs filtered to device A → one
+    result_a = await hass.services.async_call(
+        DOMAIN,
+        "list_jobs",
+        {"device_id": dev_id_a},
+        blocking=True,
+        return_response=True,
+    )
+    assert len(result_a["jobs"]) == 1
+    assert result_a["jobs"][0]["serial_number"] == MOCK_SERIAL
+
+    # list_jobs filtered to device B → one
+    result_b = await hass.services.async_call(
+        DOMAIN,
+        "list_jobs",
+        {"device_id": dev_id_b},
+        blocking=True,
+        return_response=True,
+    )
+    assert len(result_b["jobs"]) == 1
+    assert result_b["jobs"][0]["serial_number"] == MOCK_SERIAL_2
+
+
+@pytest.mark.asyncio
+async def test_multi_device_start_targets_correct_device(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """start_job with device_id uploads to the correct device."""
+    await _setup_entry(hass, fake_s1_server, serial=MOCK_SERIAL)
+    dev_id_a = _get_device_id(hass, MOCK_SERIAL)
+
+    # Save on device A
+    with patch(
+        "custom_components.xtool_s1.api.XToolS1Client.download_job",
+        new_callable=AsyncMock,
+        return_value=SAMPLE_GCODE,
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            "save_job",
+            {
+                "title": "cut1",
+                "description": "test",
+                "material": "Acrylic",
+                "thickness_mm": 5.0,
+                "device_id": dev_id_a,
+            },
+            blocking=True,
+        )
+
+    # Start on device A
+    with (
+        patch(
+            "custom_components.xtool_s1.api.XToolS1Client.upload_job",
+            new_callable=AsyncMock,
+        ) as mock_upload,
+        patch(
+            "custom_components.xtool_s1.api.XToolS1Client.start_job_sequence",
+            new_callable=AsyncMock,
+        ) as mock_start,
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            "start_job",
+            {"title": "cut1", "confirm": True, "device_id": dev_id_a},
+            blocking=True,
+        )
+    mock_upload.assert_awaited_once()
+    mock_start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_multi_device_requires_device_id(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """Services raise when multiple devices exist but no device_id given."""
+    await _setup_entry(hass, fake_s1_server, serial=MOCK_SERIAL)
+
+    entry_b = _entry(fake_s1_server.host, serial=MOCK_SERIAL_2)
+    entry_b.add_to_hass(hass)
+    with patch_ports(fake_s1_server):
+        assert await hass.config_entries.async_setup(entry_b.entry_id)
+        await hass.async_block_till_done()
+
+    with pytest.raises(HomeAssistantError, match="Multiple xTool S1"):
+        await hass.services.async_call(
+            DOMAIN,
+            "save_job",
+            {"title": "x", "description": "x", "material": "x", "thickness_mm": 1.0},
+            blocking=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_multi_device_delete_isolation(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """Deleting a job on device A does not affect device B."""
+    await _setup_entry(hass, fake_s1_server, serial=MOCK_SERIAL)
+    dev_id_a = _get_device_id(hass, MOCK_SERIAL)
+
+    entry_b = _entry(fake_s1_server.host, serial=MOCK_SERIAL_2)
+    entry_b.add_to_hass(hass)
+    with patch_ports(fake_s1_server):
+        assert await hass.config_entries.async_setup(entry_b.entry_id)
+        await hass.async_block_till_done()
+    dev_id_b = _get_device_id(hass, MOCK_SERIAL_2)
+
+    # Save on both
+    for dev_id in (dev_id_a, dev_id_b):
+        with patch(
+            "custom_components.xtool_s1.api.XToolS1Client.download_job",
+            new_callable=AsyncMock,
+            return_value=SAMPLE_GCODE,
+        ):
+            await hass.services.async_call(
+                DOMAIN,
+                "save_job",
+                {
+                    "title": "same",
+                    "description": "test",
+                    "material": "Wood",
+                    "thickness_mm": 3.0,
+                    "device_id": dev_id,
+                },
+                blocking=True,
+            )
+
+    # Delete on A only
+    await hass.services.async_call(
+        DOMAIN,
+        "delete_job",
+        {"title": "same", "device_id": dev_id_a},
+        blocking=True,
+    )
+
+    # B still has its copy
+    result = await hass.services.async_call(
+        DOMAIN,
+        "list_jobs",
+        {"device_id": dev_id_b},
+        blocking=True,
+        return_response=True,
+    )
+    assert len(result["jobs"]) == 1
+    assert result["jobs"][0]["serial_number"] == MOCK_SERIAL_2
+
+    # A has no jobs
+    result_a = await hass.services.async_call(
+        DOMAIN,
+        "list_jobs",
+        {"device_id": dev_id_a},
+        blocking=True,
+        return_response=True,
+    )
+    assert len(result_a["jobs"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_entry_unknown_device(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """_resolve_entry raises for a bogus device_id."""
+    await _setup_entry(hass, fake_s1_server)
+
+    with pytest.raises(HomeAssistantError, match="Unknown device"):
+        await hass.services.async_call(
+            DOMAIN,
+            "save_job",
+            {
+                "title": "x",
+                "description": "x",
+                "material": "x",
+                "thickness_mm": 1.0,
+                "device_id": "bogus_id_does_not_exist",
+            },
+            blocking=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolve_entry_wrong_domain_device(
+    hass: HomeAssistant, fake_s1_server
+) -> None:
+    """_resolve_entry raises when device_id belongs to a different integration."""
+    await _setup_entry(hass, fake_s1_server)
+
+    # Register a device that belongs to a *different* integration
+    other_entry = MockConfigEntry(domain="other", title="other", data={})
+    other_entry.add_to_hass(hass)
+    dev_reg = dr.async_get(hass)
+    other_device = dev_reg.async_get_or_create(
+        config_entry_id=other_entry.entry_id,
+        identifiers={("other", "other_serial")},
+    )
+
+    with pytest.raises(HomeAssistantError, match="is not an xTool S1"):
+        await hass.services.async_call(
+            DOMAIN,
+            "save_job",
+            {
+                "title": "x",
+                "description": "x",
+                "material": "x",
+                "thickness_mm": 1.0,
+                "device_id": other_device.id,
+            },
+            blocking=True,
+        )

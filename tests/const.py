@@ -8,3 +8,7 @@ MOCK_FIRMWARE = "1.2.3"
 MOCK_TOOL_TYPE = "diode"
 
 MOCK_ENTRY_TITLE = f"xTool S1 ({MOCK_HOST})"
+
+# Second device for multi-device tests
+MOCK_HOST_2 = "192.168.4.43"
+MOCK_SERIAL_2 = "S1-CD-7654321"
