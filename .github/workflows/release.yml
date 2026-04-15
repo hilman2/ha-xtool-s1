@@ -48,7 +48,7 @@ jobs:
           ls -la xtool_s1.zip
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.version }}
           name: ${{ steps.tag.outputs.version }}
