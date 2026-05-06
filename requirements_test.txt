@@ -13,4 +13,4 @@ syrupy>=4.7.0
 
 # Lint / format (kept here so CI installs them in one shot)
 black>=24.10.0
-ruff>=0.7.0
+ruff>=0.15.12
